@@ -421,6 +421,94 @@ static bool drawObjCar(Color body) {
     return true;
 }
 
+// ---- real-car GLB models (material-colour only, no textures); normalised to a 4.4 m car, long axis = +z ----
+struct RealSpec { const char* dir; int pr, pg, pb; bool flip; const char* shown; };
+static const RealSpec* realSpecFor(int design) {
+    static const RealSpec dodge{"dodge_charger", 163, 4, 1, false, "DODGE CHARGER"};
+    static const RealSpec gtr{"nissan_gtr", 5, 19, 86, false, "NISSAN GTR"};
+    static const RealSpec camaro{"camaro_zl1", 232, 13, 8, false, "CAMARO ZL1"};
+    switch (design) { case 2: return &dodge; case 3: return &camaro; case 4: return &gtr; default: return nullptr; }
+}
+static ObjCar& glbCar(const RealSpec& rs) {
+    static std::map<std::string, ObjCar> cache;
+    ObjCar& M = cache[rs.dir];
+    if (M.tried) return M;
+    M.tried = true;
+    std::string rel = std::string("assets/models/") + rs.dir + "/model.glb";
+    const char* pre[] = {"", "../", "../../"};
+    std::string path;
+    for (const char* p : pre) if (FileExists((std::string(p) + rel).c_str())) { path = std::string(p) + rel; break; }
+    if (path.empty()) { std::string app = GetApplicationDirectory(); if (FileExists((app + rel).c_str())) path = app + rel; }
+    if (path.empty()) return M;
+    Model m = LoadModel(path.c_str());
+    if (m.meshCount <= 0) return M;
+    struct Tri { Vector3 p[3]; Color c; bool paint; };
+    std::vector<Tri> tris;
+    Vector3 mn{1e9f, 1e9f, 1e9f}, mx{-1e9f, -1e9f, -1e9f};
+    for (int i = 0; i < m.meshCount; i++) {
+        const Mesh& me = m.meshes[i];
+        Color c = m.materials[m.meshMaterial[i]].maps[MATERIAL_MAP_ALBEDO].color;
+        bool paint = abs((int)c.r - rs.pr) < 8 && abs((int)c.g - rs.pg) < 8 && abs((int)c.b - rs.pb) < 8;
+        auto g = [](unsigned char v) { return (unsigned char)(255.f * powf(v / 255.f, 1.f / 2.2f)); };
+        Color d{g(c.r), g(c.g), g(c.b), 255};
+        for (int t = 0; t < me.triangleCount; t++) {
+            Tri tr; tr.c = d; tr.paint = paint;
+            for (int k = 0; k < 3; k++) {
+                int vi = me.indices ? me.indices[t * 3 + k] : t * 3 + k;
+                Vector3 v{me.vertices[vi * 3], me.vertices[vi * 3 + 1], me.vertices[vi * 3 + 2]};
+                tr.p[k] = v;
+                mn = {fminf(mn.x, v.x), fminf(mn.y, v.y), fminf(mn.z, v.z)}; mx = {fmaxf(mx.x, v.x), fmaxf(mx.y, v.y), fmaxf(mx.z, v.z)};
+            }
+            tris.push_back(tr);
+        }
+    }
+    UnloadModel(m);
+    bool alongX = (mx.x - mn.x) > (mx.z - mn.z);
+    float longLen = alongX ? mx.x - mn.x : mx.z - mn.z;
+    float S = 4.4f / longLen;
+    Vector3 cen{(mn.x + mx.x) * .5f, mn.y, (mn.z + mx.z) * .5f};
+    Vector3 bc{0, (mn.y + mx.y) * .5f * S, 0};
+    for (Tri& t : tris) {
+        Vector3 q[3];
+        for (int k = 0; k < 3; k++) {
+            float x = (t.p[k].x - cen.x) * S, y = (t.p[k].y - cen.y) * S, z = (t.p[k].z - cen.z) * S;
+            if (alongX) { float nx = -z, nz = x; x = nx; z = nz; }
+            if (rs.flip) { x = -x; z = -z; }
+            q[k] = {x, y + 0.02f, z};
+        }
+        Vector3 n = Vector3CrossProduct(Vector3Subtract(q[1], q[0]), Vector3Subtract(q[2], q[0]));
+        float nl = Vector3Length(n); if (nl < 1e-9f) continue; n = Vector3Scale(n, 1.f / nl);
+        Vector3 mid = Vector3Scale(Vector3Add(Vector3Add(q[0], q[1]), q[2]), 1.f / 3.f);
+        Vector3 ctr{0, (mx.y - mn.y) * .5f * S, 0};
+        if (Vector3DotProduct(n, Vector3Subtract(mid, ctr)) < 0.f) n = Vector3Scale(n, -1.f);
+        float sh = 0.55f + 0.45f * fmaxf(0.f, Vector3DotProduct(n, Vector3Normalize({0.4f, 1.f, -0.3f})));
+        for (int k = 0; k < 3; k++) M.tris.push_back({q[k], t.c, t.paint, sh});
+    }
+    (void)bc;
+    M.ok = !M.tris.empty();
+    return M;
+}
+static bool drawGlbCar(const RealSpec& rs, Color body) {
+    ObjCar& M = glbCar(rs);
+    if (!M.ok) return false;
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    for (const ObjVert& v : M.tris) {
+        Color b = v.paint ? body : v.c;
+        rlColor4ub((unsigned char)fminf(255.f, b.r * v.shade), (unsigned char)fminf(255.f, b.g * v.shade),
+                   (unsigned char)fminf(255.f, b.b * v.shade), body.a);
+        rlVertex3f(v.v.x, v.v.y, v.v.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+    return true;
+}
+// name shown to the player: the real model name only when that model file actually loaded
+static std::string shownName(const sim::CarSpec& sp) {
+    if (const RealSpec* rs = realSpecFor(sp.design)) if (glbCar(*rs).ok) return rs->shown;
+    return sp.name;
+}
+
 void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Matrix m = MatrixMultiply(MatrixRotateY(PI * 0.5f - c.heading), MatrixTranslate(c.pos.x, 0, c.pos.y));
     rlPushMatrix();
@@ -430,7 +518,8 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Color accent = (sp.name == "SPRINTER") ? Color{255, 200, 40, body.a} : (sp.name == "HAULER") ? Color{230, 230, 240, 255} : Color{0, 229, 220, 255};
     accent.a = body.a;
     float width=sp.design==5?1.65f:sp.design==6?2.5f:sp.design==4?2.3f:sp.design==7?1.9f:2.1f;
-    bool imported = (sp.design == 7) && drawObjCar(body);
+    const RealSpec* rsp = realSpecFor(sp.design);
+    bool imported = (sp.design == 7 && drawObjCar(body)) || (rsp && drawGlbCar(*rsp, body));
     if (!imported) drawCarBody(sp.design, body, glass, dark, accent);
     bool bigWheels = (sp.design == 2 || sp.design == 6);
     float wr = sp.radius * (bigWheels ? 0.52f : sp.design == 5 ? 0.36f : 0.42f);
@@ -869,7 +958,7 @@ static void drawGarage(GameApp& app, int selected, float rotation) {
     DrawRectangle(0,0,W,5,{0,215,220,255});
     DrawText("OVERDRIVE / GARAGE",44,30,28,{150,170,190,255});
     DrawText(TextFormat("%02d / 08",selected+1),44,80,22,{0,215,220,255});
-    DrawText(v.name.c_str(),44,112,48,WHITE);
+    DrawText(shownName(v).c_str(),44,112,48,WHITE);
     DrawText(TextFormat("CREDITS  %d",app.settings.credits),W-300,36,24,GOLD);
     Camera3D gc{{7,4,8},{0,.6f,0},{0,1,0},40,CAMERA_PERSPECTIVE};
     BeginMode3D(gc);
