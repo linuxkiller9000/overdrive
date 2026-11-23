@@ -610,7 +610,7 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             float pulse = 0.8f + 0.2f * std::sin(GetTime() * 6.0);
             Color pc = pickupColor(pk.type);
             DrawCubeV({pk.pos.x, 1.f, pk.pos.y}, {pulse, pulse, pulse}, pc);
-            DrawSphere({pk.pos.x, 2.2f + 0.3f * std::sin(GetTime() * 3.0), pk.pos.y}, 0.35f, pc);
+            DrawSphere({pk.pos.x, 2.2f + 0.3f * (float)std::sin(GetTime() * 3.0), pk.pos.y}, 0.35f, pc);
         }
     // combat: projectiles, mines, shock orbs, shields
     for (auto& s : r.shots) {
