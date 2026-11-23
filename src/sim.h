@@ -38,8 +38,18 @@ struct CarSpec {
     float boostAccel = 12.f;   // extra accel while boosting
     float boostTime = 2.5f;    // seconds per charge
     float radius = 1.1f;       // collision radius
-    float skill = 1.f;         // AI multiplier on target speed
+    float mass = 1.f;          // collision inertia (shared with player vehicles)
 };
+
+// AI driving quality: decision pace/mistakes only, never physical advantages.
+struct AITune {
+    float pace = 0.95f;        // fraction of spec limits the AI asks for
+    float steerGain = 2.2f;    // reaction sharpness
+    float wobbleMag = 0.2f;    // mistake magnitude (rad applied to steer)
+    int wobbleMask = 0x3FF;    // mistake frequency: rand()&mask == 0
+    bool usesBoost = true;
+};
+AITune difficultyTune(int level); // 0 easy, 1 normal, 2 hard
 
 struct Car {
     Vec2 pos, vel;
@@ -93,7 +103,8 @@ struct Race {
     float countdown = 3.2f;   // inputs ignored while > 0
     mutable uint32_t rngState = 0x9E3779B9u;
 
-    void init(int laps, float aiSkill = 1.f, int playerVehicle = 0);
+    AITune aiTune[8];
+    void init(int laps, int aiDifficulty = 1, int playerVehicle = 0);
     void step(const std::vector<CarInput>& inputs);
     uint32_t rand() const;
     float time() const { return tick * STEP; }

@@ -95,24 +95,30 @@ std::vector<Vec2> neonLoopControlPoints() {
 std::vector<CarSpec> defaultRoster() {
     CarSpec balanced;  balanced.name = "STANDARD";
     CarSpec sprinter;  sprinter.name = "SPRINTER";
-    sprinter.accel = 18.f; sprinter.maxSpeed = 39.f; sprinter.steerRate = 2.4f; sprinter.skill = 0.97f;
+    sprinter.accel = 18.f; sprinter.maxSpeed = 39.f; sprinter.steerRate = 2.4f; sprinter.mass = 0.85f;
     CarSpec heavy;     heavy.name = "HAULER";
     heavy.accel = 11.f; heavy.maxSpeed = 45.f; heavy.grip = 11.f; heavy.driftGrip = 3.f;
-    heavy.radius = 1.3f; heavy.skill = 0.95f;
+    heavy.radius = 1.3f; heavy.mass = 1.6f;
     return {balanced, sprinter, heavy};
 }
 
-void Race::init(int laps, float aiSkill, int playerVehicle) {
+AITune difficultyTune(int level) {
+    AITune t;
+    if (level == 0) { t.pace = 0.85f; t.steerGain = 1.7f; t.wobbleMag = 0.45f; t.wobbleMask = 0x7F; t.usesBoost = false; }
+    else if (level == 2) { t.pace = 1.0f; t.steerGain = 2.6f; t.wobbleMag = 0.08f; t.wobbleMask = 0xFFF; }
+    return t;
+}
+
+void Race::init(int laps, int aiDifficulty, int playerVehicle) {
     lapsToWin = laps;
     tick = 0; countdown = 3.2f; finishedCount = 0;
     specs = defaultRoster();
-    // player drives the chosen vehicle; AI take the other specs with the difficulty multiplier
+    // player drives the chosen vehicle; AI take the other specs, same physical limits
     std::vector<CarSpec> roster = defaultRoster();
-    CarSpec player = roster[playerVehicle % (int)roster.size()];
-    specs[0] = player;
+    specs[0] = roster[playerVehicle % (int)roster.size()];
     for (size_t i = 1; i < specs.size(); i++) {
         specs[i] = roster[(playerVehicle + i) % roster.size()];
-        specs[i].skill *= aiSkill;
+        aiTune[i] = difficultyTune(aiDifficulty);
     }
     track.build(neonLoopControlPoints(), 9.f, 24);
     cars.clear();
@@ -254,9 +260,11 @@ void Race::step(const std::vector<CarInput>& inputs) {
                 cars[j].pos = cars[j].pos + push;
                 float rel = dot(cars[j].vel - cars[i].vel, n);
                 if (rel < 0) {
+                    // mass-weighted impulse: heavier vehicles push lighter ones
+                    float mi = specs[i].mass, mj = specs[j].mass;
                     Vec2 imp = n * (rel * 0.7f);
-                    cars[i].vel = cars[i].vel + imp;
-                    cars[j].vel = cars[j].vel - imp;
+                    cars[i].vel = cars[i].vel + imp * (2.f * mj / (mi + mj));
+                    cars[j].vel = cars[j].vel - imp * (2.f * mi / (mi + mj));
                 }
             }
         }
@@ -283,6 +291,7 @@ CarInput aiDrive(const Race& race, int i) {
     const CarSpec& sp = race.specs[i];
     CarInput in{};
     if (c.finished) return in;
+    const AITune& tune = race.aiTune[i];
     Vec2 fwd = {std::cos(c.heading), std::sin(c.heading)};
     float speed = dot(c.vel, fwd);
     // pure pursuit: aim at a point ahead on the centerline
@@ -290,18 +299,18 @@ CarInput aiDrive(const Race& race, int i) {
     Vec2 target = race.track.pointAt(c.sHint + look);
     Vec2 to = target - c.pos;
     float ang = wrapAngle(std::atan2(to.y, to.x) - c.heading);
-    in.steer = clampf(ang * 2.2f, -1.f, 1.f);
+    in.steer = clampf(ang * tune.steerGain, -1.f, 1.f);
     // target speed from curvature ahead
     Vec2 d1 = race.track.dirAt(c.sHint + look * 0.5f);
     Vec2 d2 = race.track.dirAt(c.sHint + look);
     float curve = std::fabs(wrapAngle(std::atan2(d2.y, d2.x) - std::atan2(d1.y, d1.x)));
-    float targetSpeed = sp.maxSpeed * sp.skill / (1.f + curve * 2.4f);
+    float targetSpeed = sp.maxSpeed * tune.pace / (1.f + curve * 2.4f);
     if (speed < targetSpeed) in.throttle = 1.f;
     else { in.brake = clampf((speed - targetSpeed) * 0.3f, 0.f, 1.f); }
-    // occasional human-like lift-off wobble from rng
-    if ((race.rand() & 0x3FF) == 0) in.steer = clampf(in.steer + ((int)(race.rand() % 21) - 10) * 0.02f, -1.f, 1.f);
+    // occasional human-like mistake from rng, scaled by driving quality
+    if ((race.rand() & tune.wobbleMask) == 0) in.steer = clampf(in.steer + ((int)(race.rand() % 21) - 10) * 0.02f * tune.wobbleMag * 10.f, -1.f, 1.f);
     // use boost on straights
-    if (c.boostCharges > 0 && curve < 0.05f && speed > sp.maxSpeed * 0.7f) in.boost = true;
+    if (tune.usesBoost && c.boostCharges > 0 && curve < 0.05f && speed > sp.maxSpeed * 0.7f) in.boost = true;
     return in;
 }
 

@@ -123,7 +123,37 @@ int runTests() {
         sim::CarInput m = sim::mergeInputs(k, g);
         CHECK(m.steer == g.steer && m.throttle == 1.f && m.boost, "merge: pad steer wins, max throttle");
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (9 groups)\n");
+    // difficulty changes AI decisions, not physical limits
+    {
+        sim::Race easy, hard;
+        easy.init(3, 0, 0);
+        hard.init(3, 2, 0);
+        CHECK(easy.specs[1].maxSpeed == hard.specs[1].maxSpeed && easy.specs[1].accel == hard.specs[1].accel,
+              "AI uses same physical limits as player roster");
+        for (int i = 0; i < 60 * 30; i++) {
+            easy.step({sim::aiDrive(easy, 0), sim::aiDrive(easy, 1), sim::aiDrive(easy, 2)});
+            hard.step({sim::aiDrive(hard, 0), sim::aiDrive(hard, 1), sim::aiDrive(hard, 2)});
+        }
+        CHECK(hard.cars[1].progress > easy.cars[1].progress, "hard AI outpaces easy AI");
+        CHECK(sim::difficultyTune(0).wobbleMag > sim::difficultyTune(2).wobbleMag, "easy AI makes bigger mistakes");
+    }
+    // mass-weighted collisions: lighter car takes bigger velocity change
+    {
+        sim::Race r7;
+        r7.init(1, 1, 0); // player STANDARD, AI include HAULER
+        // put player (mass 1.0) and hauler (mass 1.6) head to head
+        int hi = -1;
+        for (size_t i = 1; i < r7.specs.size(); i++) if (r7.specs[i].name == "HAULER") hi = (int)i;
+        CHECK(hi > 0, "hauler in AI roster");
+        r7.cars[0].pos = {0, 0}; r7.cars[0].vel = {10, 0};
+        r7.cars[hi].pos = {2.f, 0}; r7.cars[hi].vel = {-10, 0};
+        sim::Vec2 v0 = r7.cars[0].vel, vh = r7.cars[hi].vel;
+        r7.step({{}, {}, {}});
+        float dvPlayer = sim::len(r7.cars[0].vel - v0);
+        float dvHauler = sim::len(r7.cars[hi].vel - vh);
+        CHECK(dvPlayer > dvHauler, "heavier vehicle wins the shove");
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (11 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }

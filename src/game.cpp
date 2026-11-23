@@ -10,14 +10,14 @@
 namespace {
 
 struct TrackMeshes {
-    Model road, edgeL, edgeR;
+    Model road, edgeL, edgeR, centerLine;
     std::vector<Vector3> buildings;
     std::vector<Color> buildingColors;
     Vector3 boundsCenter{0, 0, 0};
     float boundsRadius = 400.f;
 };
 
-Model ribbonMesh(const sim::Track& t, float inner, float outer, Color c1, Color c2) {
+Model ribbonMesh(const sim::Track& t, float inner, float outer, Color c1, Color c2, bool dashed = false) {
     // Triangle strip along the centerline, offset band [inner, outer] meters left.
     int n = (int)t.center.size();
     std::vector<Vector3> verts(2 * (n + 1));
@@ -35,14 +35,17 @@ Model ribbonMesh(const sim::Track& t, float inner, float outer, Color c1, Color 
         colors[2 * i] = col;
         colors[2 * i + 1] = col;
     }
+    int quads = 0;
     for (int i = 0; i < n; i++) {
+        if (dashed && (i % 10) >= 4) continue;
         int a = 2 * i, b = 2 * i + 1, c = 2 * i + 2, d = 2 * i + 3;
-        idx[6 * i + 0] = a; idx[6 * i + 1] = b; idx[6 * i + 2] = c;
-        idx[6 * i + 3] = c; idx[6 * i + 4] = b; idx[6 * i + 5] = d;
+        idx[6 * quads + 0] = a; idx[6 * quads + 1] = b; idx[6 * quads + 2] = c;
+        idx[6 * quads + 3] = c; idx[6 * quads + 4] = b; idx[6 * quads + 5] = d;
+        quads++;
     }
     Mesh m{};
     m.vertexCount = (int)verts.size();
-    m.triangleCount = 2 * n;
+    m.triangleCount = 2 * quads;
     m.vertices = (float*)MemAlloc(verts.size() * sizeof(Vector3));
     m.colors = (unsigned char*)MemAlloc(colors.size() * sizeof(Color));
     m.indices = (unsigned short*)MemAlloc(idx.size() * sizeof(unsigned short));
@@ -60,6 +63,7 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
     Color neonA{0, 229, 220, 255}, neonB{255, 45, 130, 255};
     tm.edgeL = ribbonMesh(t, t.halfWidth - 0.4f, t.halfWidth, neonA, neonA);
     tm.edgeR = ribbonMesh(t, -t.halfWidth, -t.halfWidth + 0.4f, neonB, neonB);
+    tm.centerLine = ribbonMesh(t, -0.15f, 0.15f, {80, 80, 95, 255}, {80, 80, 95, 255}, true);
     // procedural city blocks outside the road
     tm.buildings.clear();
     if (quality > 0) {
@@ -70,12 +74,12 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
                 sim::Vec2 c = t.center[i];
                 sim::Vec2 d = t.dirAt(t.cum[i]);
                 sim::Vec2 n{-d.y, d.x};
-                float off = t.halfWidth + 62.f + rnd() * 40.f;
+                float off = t.halfWidth + 95.f + rnd() * 55.f;
                 float x = c.x + n.x * off * side, z = c.y + n.y * off * side;
                 // keep the camera corridor clear: reject if near ANY track point
                 bool tooClose = false;
                 for (auto& tp : t.center)
-                    if (sim::len(sim::Vec2{x, z} - tp) < t.halfWidth + 55.f) { tooClose = true; break; }
+                    if (sim::len(sim::Vec2{x, z} - tp) < t.halfWidth + 88.f) { tooClose = true; break; }
                 if (tooClose) continue;
                 float h = 12.f + rnd() * 42.f;
                 tm.buildings.push_back({x, h * 0.5f, z});
@@ -92,14 +96,32 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Matrix m = MatrixMultiply(MatrixRotateY(-c.heading), MatrixTranslate(c.pos.x, 0, c.pos.y));
     rlPushMatrix();
     rlMultMatrixf(MatrixToFloat(m));
-    DrawCubeV({0, 0.45f, 0}, {2.2f, 0.55f, 4.2f}, body);
-    DrawCubeV({0, 0.95f, 0.2f}, {1.8f, 0.5f, 2.0f}, ColorBrightness(body, -0.35f));
+    Color dark = ColorBrightness(body, -0.4f);
+    Color glass{15, 25, 40, 255};
+    Color accent = (sp.name == "SPRINTER") ? Color{255, 200, 40, 255} : (sp.name == "HAULER") ? Color{230, 230, 240, 255} : Color{0, 229, 220, 255};
+    if (sp.name == "HAULER") {
+        DrawCubeV({0, 0.75f, 0}, {2.6f, 1.1f, 4.6f}, body);
+        DrawCubeV({0, 1.45f, -0.4f}, {2.2f, 0.6f, 2.6f}, glass);
+        DrawCubeV({0, 0.75f, -2.35f}, {2.6f, 0.5f, 0.2f}, accent);
+    } else {
+        float nose = (sp.name == "SPRINTER") ? 0.9f : 0.7f;
+        DrawCubeV({0, 0.35f, 1.55f}, {1.9f, 0.35f, 1.3f}, dark);
+        DrawCubeV({0, 0.5f, 0}, {2.1f, 0.55f, 3.2f}, body);
+        DrawCubeV({0, 0.95f, -0.25f}, {1.5f, 0.45f, 1.6f}, glass);
+        DrawCubeV({0, 0.85f, -1.85f}, {2.0f, 0.08f, 0.5f}, accent);
+        DrawCubeV({-0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
+        DrawCubeV({0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
+        DrawCubeV({0, 0.42f, -1.65f}, {1.8f, 0.18f, 0.1f}, {255, 30, 60, 255});
+        DrawCubeV({0, 0.28f, nose + 1.6f}, {1.7f, 0.12f, 0.3f}, accent);
+    }
     float wr = sp.radius * 0.42f;
     for (int sx = -1; sx <= 1; sx += 2)
         for (int sz = -1; sz <= 1; sz += 2)
-            DrawCylinder({sx * 1.05f, wr, sz * 1.4f}, wr, wr, 0.35f, 8, {20, 20, 24, 255});
-    if (c.boostLeft > 0.f)
-        DrawCubeV({0, 0.45f, -2.4f}, {1.4f, 0.3f, 0.8f}, {255, 200, 40, 255});
+            DrawCylinder({sx * 1.05f, wr, sz * 1.4f}, wr, wr, 0.35f, 8, {16, 16, 20, 255});
+    if (c.boostLeft > 0.f) {
+        DrawCubeV({0, 0.45f, -2.6f}, {1.4f, 0.3f, 0.9f}, {255, 200, 40, 255});
+        DrawCubeV({0, 0.45f, -3.2f}, {0.9f, 0.2f, 0.7f}, {255, 120, 20, 200});
+    }
     rlPopMatrix();
 }
 
@@ -137,8 +159,9 @@ void drawHud(const sim::Race& r, const GameApp& app, int W, int H) {
     DrawText(TextFormat("%3.0f", spd), W - 150, H - 110, 64, WHITE);
     DrawText("km/h", W - 145, H - 40, 20, GRAY);
     DrawText(TextFormat("LAP %d/%d", p.lap + 1 > r.lapsToWin ? r.lapsToWin : p.lap + 1, r.lapsToWin), 20, 20, 28, WHITE);
-    int place = 1;
-    for (size_t i = 1; i < r.cars.size(); i++) if (r.cars[i].progress > p.progress) place++;
+    int place = p.finished ? p.finishPlace : 1;
+    if (!p.finished)
+        for (size_t i = 1; i < r.cars.size(); i++) if (r.cars[i].progress > p.progress) place++;
     DrawText(place == 1 ? "1st" : (place == 2 ? "2nd" : "3rd"), W - 90, 20, 28, place == 1 ? GOLD : WHITE);
     float t = p.finished ? p.raceTime : r.time() - 3.2f;
     if (t < 0) t = 0;
@@ -210,13 +233,40 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     sim::Vec2 fwd{std::cos(p.heading), std::sin(p.heading)};
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
+    DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), {14, 10, 42, 255}, {64, 18, 60, 255});
     BeginMode3D(cam);
     DrawPlane({0, -0.05f, 0}, {1600, 1600}, {16, 16, 28, 255});
     DrawModel(tm.road, {0, 0, 0}, 1.f, WHITE);
     DrawModel(tm.edgeL, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.edgeR, {0, 0.02f, 0}, 1.f, WHITE);
-    for (size_t i = 0; i < tm.buildings.size(); i++)
-        DrawCubeV(tm.buildings[i], {10, tm.buildings[i].y * 2, 10}, tm.buildingColors[i]);
+    DrawModel(tm.centerLine, {0, 0.03f, 0}, 1.f, WHITE);
+    Color fog{16, 12, 40, 255};
+    for (size_t i = 0; i < tm.buildings.size(); i++) {
+        Vector3 b = tm.buildings[i];
+        float dist = Vector3Distance(b, cam.position);
+        float fade = 1.f - fminf(dist / 700.f, 0.7f);
+        Color bc = ColorLerp(fog, tm.buildingColors[i], fade);
+        DrawCubeV(b, {10, b.y * 2, 10}, bc);
+        DrawCubeV({b.x, b.y * 2 + 1.2f, b.z}, {6.5f, 2.4f, 6.5f}, ColorBrightness(bc, -0.25f));
+        Color trim = (i % 3 == 0) ? Color{0, 229, 220, 255} : (i % 3 == 1) ? Color{255, 45, 130, 255} : Color{255, 200, 40, 255};
+        DrawCubeV({b.x, b.y * 2 + 0.3f, b.z}, {10.4f, 0.35f, 10.4f}, ColorLerp(fog, trim, fade));
+        if (b.y > 22.f)
+            DrawCylinder({b.x, b.y * 2 + 5.f, b.z}, 0.25f, 0.08f, 6.f, 6, ColorBrightness(bc, 0.5f));
+    }
+    // landmark spire outside the track bounds: stacked needle skyline beacon
+    {
+        Vector3 s = tm.boundsCenter;
+        s.x += tm.boundsRadius + 250.f;
+        s.z -= tm.boundsRadius * 0.5f;
+        DrawCubeV({s.x, 25.f, s.z}, {9.f, 50.f, 9.f}, {30, 35, 70, 255});
+        DrawCubeV({s.x, 58.f, s.z}, {5.5f, 18.f, 5.5f}, {40, 48, 90, 255});
+        DrawCubeV({s.x, 72.f, s.z}, {3.f, 10.f, 3.f}, {55, 65, 110, 255});
+        DrawCylinder({s.x, 84.f, s.z}, 0.8f, 0.1f, 14.f, 8, {80, 90, 140, 255});
+        DrawSphere({s.x, 92.f, s.z}, 1.5f, {255, 60, 90, 255});
+        for (int band = 0; band < 4; band++)
+            DrawCubeV({s.x, 10.f + band * 12.f, s.z}, {9.4f, 0.7f, 9.4f}, {0, 229, 220, 255});
+        DrawCubeV({s.x, 61.f, s.z}, {6.f, 0.7f, 6.f}, {255, 45, 130, 255});
+    }
     // barriers + checkpoint gates + start banner
     for (size_t i = 0; i < r.track.center.size(); i += 4) {
         sim::Vec2 c = r.track.center[i];
@@ -256,14 +306,33 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
 }
 
 // ---------- menus ----------
-static const char* diffName(int d) { return d == 0 ? "ROOKIE" : d == 2 ? "ACE" : "PRO"; }
+static const char* diffName(int d) { return d == 0 ? "EASY (Sunday Drive)" : d == 2 ? "HARD (Apex)" : "NORMAL (Club)"; }
 
 struct MenuResult { bool quit = false; };
 
 // returns true if the user chose "race"
+static void drawTitle(const GameApp& app, int sel) {
+    const char* items[] = {"START RACE", "VEHICLE", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
+    std::vector<sim::CarSpec> roster = sim::defaultRoster();
+    BeginDrawing();
+    ClearBackground({8, 8, 20, 255});
+    drawTextOutline("OVERDRIVE", GetScreenWidth() / 2 - 170, 60, 64, {255, 45, 130, 255});
+    for (int i = 0; i < 7; i++) {
+        const char* val = "";
+        if (i == 1) val = roster[app.settings.playerVehicle % (int)roster.size()].name.c_str();
+        if (i == 2) val = diffName(app.settings.aiDifficulty);
+        if (i == 3) val = TextFormat("%d", app.settings.laps);
+        if (i == 4) val = app.settings.quality ? "HIGH" : "LOW";
+        if (i == 5) val = TextFormat("%d", app.settings.fpsCap);
+        drawTextOutline(TextFormat("%s%s%s%s", i == sel ? "> " : "  ", items[i], val[0] ? ": " : "", val),
+                        GetScreenWidth() / 2 - 220, 200 + i * 44, 28, i == sel ? GOLD : WHITE);
+    }
+    drawTextOutline("ARROWS + ENTER to select", GetScreenWidth() / 2 - 290, GetScreenHeight() - 50, 18, GRAY);
+    EndDrawing();
+}
+
 static bool titleMenu(GameApp& app) {
     int sel = 0;
-    const char* items[] = {"START RACE", "VEHICLE", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_UP)) sel = (sel + 6) % 7;
@@ -285,44 +354,54 @@ static bool titleMenu(GameApp& app) {
             if (sel == 4) app.settings.quality = 1 - app.settings.quality;
             if (sel == 5) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
         }
-        BeginDrawing();
-        ClearBackground({8, 8, 20, 255});
-        drawTextOutline("OVERDRIVE", GetScreenWidth() / 2 - 170, 60, 64, {255, 45, 130, 255});
-        for (int i = 0; i < 7; i++) {
-            const char* val = "";
-            if (i == 1) val = roster[app.settings.playerVehicle % (int)roster.size()].name.c_str();
-            if (i == 2) val = diffName(app.settings.aiDifficulty);
-            if (i == 3) val = TextFormat("%d", app.settings.laps);
-            if (i == 4) val = app.settings.quality ? "HIGH" : "LOW";
-            if (i == 5) val = TextFormat("%d", app.settings.fpsCap);
-            drawTextOutline(TextFormat("%s%s  %s", i == sel ? "> " : "  ", items[i], val),
-                            GetScreenWidth() / 2 - 160, 170 + i * 40, 28, i == sel ? GOLD : WHITE);
-        }
-        drawTextOutline("UP/DOWN select   LEFT/RIGHT change   ENTER start", GetScreenWidth() / 2 - 290, GetScreenHeight() - 50, 18, GRAY);
-        EndDrawing();
+        drawTitle(app, sel);
     }
     return false;
 }
 
 // pause menu: 0 resume, 1 restart, 2 quit to title
+static void drawPause(int sel) {
+    const char* items[] = {"RESUME", "RESTART RACE", "QUIT TO TITLE"};
+    BeginDrawing();
+    ClearBackground({8, 8, 20, 255});
+    drawTextOutline("PAUSED", GetScreenWidth() / 2 - 90, 120, 48, WHITE);
+    for (int i = 0; i < 3; i++)
+        drawTextOutline(TextFormat("%s%s", i == sel ? "> " : "  ", items[i]),
+                        GetScreenWidth() / 2 - 140, 240 + i * 44, 28, i == sel ? GOLD : WHITE);
+    EndDrawing();
+}
+
 static int pauseMenu(const GameApp& app) {
     (void)app;
     int sel = 0;
-    const char* items[] = {"RESUME", "RESTART RACE", "QUIT TO TITLE"};
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_ESCAPE)) return 0;
         if (IsKeyPressed(KEY_UP)) sel = (sel + 2) % 3;
         if (IsKeyPressed(KEY_DOWN)) sel = (sel + 1) % 3;
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) return sel;
-        BeginDrawing();
-        ClearBackground({8, 8, 20, 255});
-        drawTextOutline("PAUSED", GetScreenWidth() / 2 - 90, 120, 48, WHITE);
-        for (int i = 0; i < 3; i++)
-            drawTextOutline(TextFormat("%s%s", i == sel ? "> " : "  ", items[i]),
-                            GetScreenWidth() / 2 - 140, 240 + i * 44, 28, i == sel ? GOLD : WHITE);
-        EndDrawing();
+        drawPause(sel);
     }
     return 2;
+}
+
+static void drawResults(const GameApp& app, const sim::Race& race) {
+    const sim::Car& p = race.cars[0];
+    BeginDrawing();
+    ClearBackground({8, 8, 20, 255});
+    drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace, p.finishPlace == 2 ? "nd" : "rd"),
+                    GetScreenWidth() / 2 - 160, 90, 48, GOLD);
+    drawTextOutline(TextFormat("RACE TIME  %d:%05.2f", (int)(p.raceTime / 60), std::fmod(p.raceTime, 60.f)),
+                    GetScreenWidth() / 2 - 170, 200, 28, WHITE);
+    if (p.bestLap > 0)
+        drawTextOutline(TextFormat("BEST LAP   %0.2f s", p.bestLap), GetScreenWidth() / 2 - 170, 240, 28, WHITE);
+    if (app.settings.bestLapMs > 0)
+        drawTextOutline(TextFormat("TRACK BEST LAP   %d:%05.2f", app.settings.bestLapMs / 60000, std::fmod(app.settings.bestLapMs / 1000.f, 60.f)),
+                        GetScreenWidth() / 2 - 170, 300, 22, GRAY);
+    if (app.settings.bestRaceMs > 0)
+        drawTextOutline(TextFormat("TRACK BEST WIN   %d:%05.2f", app.settings.bestRaceMs / 60000, std::fmod(app.settings.bestRaceMs / 1000.f, 60.f)),
+                        GetScreenWidth() / 2 - 170, 330, 22, GRAY);
+    drawTextOutline("ENTER continue", GetScreenWidth() / 2 - 90, GetScreenHeight() - 60, 22, GOLD);
+    EndDrawing();
 }
 
 static void resultsScreen(GameApp& app, const sim::Race& race) {
@@ -335,22 +414,7 @@ static void resultsScreen(GameApp& app, const sim::Race& race) {
     sim::saveSettings(app.settings, app.settingsPath);
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) return;
-        BeginDrawing();
-        ClearBackground({8, 8, 20, 255});
-        drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace, p.finishPlace == 2 ? "nd" : "rd"),
-                        GetScreenWidth() / 2 - 160, 90, 48, GOLD);
-        drawTextOutline(TextFormat("RACE TIME  %d:%05.2f", (int)(p.raceTime / 60), std::fmod(p.raceTime, 60.f)),
-                        GetScreenWidth() / 2 - 170, 200, 28, WHITE);
-        if (p.bestLap > 0)
-            drawTextOutline(TextFormat("BEST LAP   %0.2f s", p.bestLap), GetScreenWidth() / 2 - 170, 240, 28, WHITE);
-        if (app.settings.bestLapMs > 0)
-            drawTextOutline(TextFormat("TRACK BEST LAP   %d:%05.2f", app.settings.bestLapMs / 60000, std::fmod(app.settings.bestLapMs / 1000.f, 60.f)),
-                            GetScreenWidth() / 2 - 170, 300, 22, GRAY);
-        if (app.settings.bestRaceMs > 0)
-            drawTextOutline(TextFormat("TRACK BEST WIN   %d:%05.2f", app.settings.bestRaceMs / 60000, std::fmod(app.settings.bestRaceMs / 1000.f, 60.f)),
-                            GetScreenWidth() / 2 - 170, 330, 22, GRAY);
-        drawTextOutline("ENTER continue", GetScreenWidth() / 2 - 90, GetScreenHeight() - 60, 22, GOLD);
-        EndDrawing();
+        drawResults(app, race);
     }
 }
 
@@ -360,11 +424,10 @@ int runGame(GameApp& app) {
     while (!WindowShouldClose()) {
         if (!titleMenu(app)) break;
         sim::saveSettings(app.settings, app.settingsPath);
-        float aiSkill = app.settings.aiDifficulty == 0 ? 0.88f : app.settings.aiDifficulty == 2 ? 1.06f : 0.97f;
         bool quitToTitle = false;
         while (!quitToTitle && !WindowShouldClose()) {
             sim::Race race;
-            race.init(app.settings.laps, aiSkill, app.settings.playerVehicle);
+            race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle);
             Camera3D cam{};
             cam.up = {0, 1, 0};
             cam.fovy = 60;
@@ -388,7 +451,7 @@ int runGame(GameApp& app) {
                 drawFrame(race, tm, cam, app, in.steer);
             }
             if (race.cars[0].finished && action == 0) resultsScreen(app, race);
-            UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR);
+            UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
             if (action == 1) continue; // restart race
             quitToTitle = true;
         }
@@ -433,6 +496,11 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
         race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
         updateChaseCam(cam, cc, race, sim::STEP);
         float t = race.time();
+        // keep evidence frames free of AI cars blocking the player from the camera
+        float nearestAi = 1e9f;
+        for (size_t ci = 1; ci < race.cars.size(); ci++)
+            nearestAi = fminf(nearestAi, sim::len(race.cars[ci].pos - race.cars[0].pos));
+        bool clearView = nearestAi > 14.f;
         // grant one boost charge mid-race so activation is guaranteed on camera
         if (!gotBoost && race.cars[0].lap >= 1 && race.cars[0].boostCharges == 0 && t > 30.f && race.cars[0].boostLeft <= 0)
             race.cars[0].boostCharges = 1;
@@ -440,7 +508,7 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
         if (t >= 5.f && taken == 0) { snap("grid-straight"); }
         else if (!gotCorner && race.cars[0].sHint > race.track.total * 0.35f && race.cars[0].sHint < race.track.total * 0.55f) {
             snap("corner"); gotCorner = true;
-        } else if (gotCorner && !gotBoost && race.cars[0].boostLeft > 0.5f) {
+        } else if (gotCorner && !gotBoost && race.cars[0].boostLeft > 0.5f && clearView) {
             snap("turbo"); gotBoost = true;
         } else if (gotBoost && !gotPause && f % 3 == 0) {
             DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), {0, 0, 0, 140});
@@ -464,7 +532,7 @@ int runUITest(GameApp& app) {
     InitWindow(1280, 720, "overdrive-uitest");
     SetTargetFPS(240);
     sim::Race race;
-    race.init(app.settings.laps, 0.97f, app.settings.playerVehicle);
+    race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle);
     Camera3D cam{};
     cam.up = {0, 1, 0};
     cam.fovy = 60;
@@ -497,4 +565,33 @@ int runUITest(GameApp& app) {
     std::printf("uitest: polledOk=%d finished=%d progress=%.1f\n", (int)polledOk,
                 (int)race.cars[0].finished, race.cars[0].progress);
     return (polledOk && race.cars[0].finished) ? 0 : 2;
+}
+
+// Renders menu/HUD evidence frames at target resolution (1366x768).
+int runUIScreens(GameApp& app, const std::string& prefix) {
+    SetConfigFlags(FLAG_WINDOW_HIDDEN | FLAG_MSAA_4X_HINT);
+    InitWindow(1366, 768, "overdrive-uiscreens");
+    // 1 title, 2 vehicle selected, 3 pause, 4 results (finished race)
+    app.settings.playerVehicle = 1;
+    drawTitle(app, 0);
+    TakeScreenshot((prefix + "-title.png").c_str());
+    drawTitle(app, 1);
+    TakeScreenshot((prefix + "-vehicle.png").c_str());
+    drawPause(0);
+    TakeScreenshot((prefix + "-pause.png").c_str());
+    sim::Race race;
+    race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle);
+    // simulate a finished race for the results frame
+    for (int f = 0; f < 60 * 400 && !race.cars[0].finished; f++) {
+        sim::CarInput aiIn = sim::aiDrive(race, 0);
+        if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) aiIn.boost = true;
+        race.step({aiIn, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+    }
+    app.settings.bestLapMs = (int)(race.cars[0].bestLap * 1000.f);
+    app.settings.bestRaceMs = (int)(race.cars[0].raceTime * 1000.f);
+    drawResults(app, race);
+    TakeScreenshot((prefix + "-results.png").c_str());
+    CloseWindow();
+    std::printf("uiscreens: finished=%d place=%d\n", (int)race.cars[0].finished, race.cars[0].finishPlace);
+    return race.cars[0].finished ? 0 : 2;
 }
