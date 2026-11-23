@@ -6,6 +6,10 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <fstream>
+#include <sstream>
+#include <map>
+#include <string>
 
 namespace {
 
@@ -333,6 +337,71 @@ static void drawCarBody(int design, Color body, Color glass, Color dark, Color a
     (void)glass;
 }
 
+
+// ---- imported real-car model (OBJ + MTL, CC0). Licence manifest: assets/models/CREDITS.md ----
+struct ObjVert { Vector3 v; Color c; bool paint; float shade; };
+struct ObjCar { bool tried = false, ok = false; std::vector<ObjVert> tris; };
+static ObjCar& objCar() {
+    static ObjCar M;
+    if (M.tried) return M;
+    M.tried = true;
+    const char* dirs[] = {"assets/models/lowpoly911/", "../assets/models/lowpoly911/", "../../assets/models/lowpoly911/"};
+    std::string base;
+    for (const char* d : dirs) { std::ifstream t(std::string(d) + "lowpoly_car.obj"); if (t) { base = d; break; } }
+    if (base.empty()) {
+        std::string app = GetApplicationDirectory();
+        std::ifstream t(app + "assets/models/lowpoly911/lowpoly_car.obj");
+        if (t) base = app + "assets/models/lowpoly911/";
+    }
+    if (base.empty()) return M;
+    std::map<std::string, Color> mats;
+    { std::ifstream f(base + "lowpoly_car.mtl"); std::string line, cur;
+      while (std::getline(f, line)) { std::istringstream is(line); std::string k; is >> k;
+        if (k == "newmtl") is >> cur;
+        else if (k == "Kd") { float r, g, b; is >> r >> g >> b; mats[cur] = Color{(unsigned char)(r*255), (unsigned char)(g*255), (unsigned char)(b*255), 255}; } } }
+    std::vector<Vector3> vs; std::string cur;
+    std::ifstream f(base + "lowpoly_car.obj"); std::string line;
+    const float S = 0.55f;
+    Vector3 cen{0, 0.6f, 0};
+    while (std::getline(f, line)) {
+        std::istringstream is(line); std::string k; is >> k;
+        if (k == "v") { float x, y, z; is >> x >> y >> z; vs.push_back({x * S, y * S, z * S}); }
+        else if (k == "usemtl") is >> cur;
+        else if (k == "f") {
+            std::vector<int> ix; std::string p;
+            while (is >> p) { int i = atoi(p.c_str()); ix.push_back(i < 0 ? (int)vs.size() + i : i - 1); }
+            for (size_t a = 1; a + 1 < ix.size(); a++) {
+                Vector3 p0 = vs[ix[0]], p1 = vs[ix[a]], p2 = vs[ix[a + 1]];
+                Vector3 n = Vector3CrossProduct(Vector3Subtract(p1, p0), Vector3Subtract(p2, p0));
+                float nl = Vector3Length(n); if (nl < 1e-9f) continue; n = Vector3Scale(n, 1.f / nl);
+                Vector3 mid = Vector3Scale(Vector3Add(Vector3Add(p0, p1), p2), 1.f / 3.f);
+                if (Vector3DotProduct(n, Vector3Subtract(mid, cen)) < 0.f) n = Vector3Scale(n, -1.f);
+                float sh = 0.55f + 0.45f * fmaxf(0.f, Vector3DotProduct(n, Vector3Normalize({0.4f, 1.f, -0.3f})));
+                Color c = mats.count(cur) ? mats[cur] : Color{80, 80, 80, 255};
+                bool paint = (cur == "car_body");
+                for (Vector3 q : {p0, p1, p2}) M.tris.push_back({q, c, paint, sh});
+            }
+        }
+    }
+    M.ok = !M.tris.empty();
+    return M;
+}
+static bool drawObjCar(Color body) {
+    ObjCar& M = objCar();
+    if (!M.ok) return false;
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    for (const ObjVert& v : M.tris) {
+        Color b = v.paint ? body : v.c;
+        rlColor4ub((unsigned char)fminf(255.f, b.r * v.shade), (unsigned char)fminf(255.f, b.g * v.shade),
+                   (unsigned char)fminf(255.f, b.b * v.shade), body.a);
+        rlVertex3f(v.v.x, v.v.y, v.v.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+    return true;
+}
+
 void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Matrix m = MatrixMultiply(MatrixRotateY(PI * 0.5f - c.heading), MatrixTranslate(c.pos.x, 0, c.pos.y));
     rlPushMatrix();
@@ -342,11 +411,12 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Color accent = (sp.name == "SPRINTER") ? Color{255, 200, 40, body.a} : (sp.name == "HAULER") ? Color{230, 230, 240, 255} : Color{0, 229, 220, 255};
     accent.a = body.a;
     float width=sp.design==5?1.65f:sp.design==6?2.5f:sp.design==4?2.3f:sp.design==7?1.9f:2.1f;
-    drawCarBody(sp.design, body, glass, dark, accent);
+    bool imported = (sp.design == 7) && drawObjCar(body);
+    if (!imported) drawCarBody(sp.design, body, glass, dark, accent);
     bool bigWheels = (sp.design == 2 || sp.design == 6);
     float wr = sp.radius * (bigWheels ? 0.52f : sp.design == 5 ? 0.36f : 0.42f);
     float track = (sp.design == 5) ? 1.15f : (sp.design == 4 ? 1.45f : 1.3f);
-    for (int sx = -1; sx <= 1; sx += 2)
+    for (int sx = -1; sx <= 1 && !imported; sx += 2)
         for (int sz = -1; sz <= 1; sz += 2) {
             float wz = sz * (bigWheels ? 1.45f : 1.4f);
             DrawCylinderEx({sx * (track - 0.3f), wr, wz}, {sx * track, wr, wz}, wr, wr, 10, {22, 24, 30, body.a});
