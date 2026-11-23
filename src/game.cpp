@@ -68,11 +68,11 @@ Model windowMesh(const std::vector<Vector3>& buildings) {
         float halfW = 5.f, top = b.y * 2.f;
         Color warm{255, 190, 90, 255}, cool{110, 200, 255, 255};
         for (int face = 0; face < 4; face++) {
-            for (float y = 3.2f; y < top - 2.f; y += 4.f) {
-                if (rnd() < 0.45f) continue; // lights out
+            for (float y = 3.4f; y < top - 2.5f; y += 6.5f) {
+                if (rnd() < 0.5f) continue; // floor lights out
                 Color wc = (rnd() < 0.5f) ? warm : cool;
-                wc.r = (unsigned char)(wc.r * (0.5f + 0.5f * rnd()));
-                float o = halfW + 0.22f, w = 3.2f, h = 1.1f;
+                wc.r = (unsigned char)(wc.r * (0.55f + 0.45f * rnd()));
+                float o = halfW + 0.22f, w = 4.4f, h = 1.7f;
                 Vector3 v0, v1, v2, v3;
                 if (face == 0)      { v0={b.x+o,y-h,b.z-w}; v1={b.x+o,y-h,b.z+w}; v2={b.x+o,y+h,b.z+w}; v3={b.x+o,y+h,b.z-w}; }
                 else if (face == 1) { v0={b.x-o,y-h,b.z+w}; v1={b.x-o,y-h,b.z-w}; v2={b.x-o,y+h,b.z-w}; v3={b.x-o,y+h,b.z+w}; }
@@ -194,6 +194,10 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
         litBox({0,.7f,-2.28f},{width*.8f,.18f,.12f},{255,30,60,body.a});
         litBox({0,1.92f,.55f},{width*.9f,.12f,2.3f},body);
         if(sp.design==6) {
+            litBox({0,2.25f,.9f},{1.5f,.22f,.3f},dark);
+            for(int lamp=-2;lamp<=2;lamp++) litBox({lamp*.3f,2.25f,1.06f},{.18f,.14f,.05f},{255,240,200,body.a});
+        }
+        if(sp.design==6) {
             litBox({0,2.08f,.55f},{width,.18f,2.5f},dark);
             litBox({0,.7f,2.3f},{width,.25f,.2f},accent);
         } else litBox({0,1.22f,-1.45f},{width*.8f,.15f,1.3f},dark);
@@ -207,7 +211,7 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
         rlVertex3f(-w,.7f,.55f);rlVertex3f(w,.7f,.55f);rlVertex3f(w,.3f,z);
         rlVertex3f(-w,.7f,.55f);rlVertex3f(w,.3f,z);rlVertex3f(-w,.3f,z);
         rlEnd();
-        float roof=sp.design==7?1.05f:sp.design==4?1.18f:sp.design==5?1.5f:1.3f;
+        float roof=sp.design==7?1.05f:sp.design==4?1.18f:sp.design==5?1.5f:sp.design==1?1.15f:1.3f;
         if(sp.design==7) {
             rlPushMatrix();rlTranslatef(0,.93f,-.4f);rlScalef(1.f,.65f,1.45f);
             DrawSphereEx({0,0,0},.72f,6,8,glass);rlPopMatrix();
@@ -216,15 +220,32 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
         }
         if(sp.design!=7) litBox({0,roof,sp.design==3?-.7f:-.3f},{width*.65f,.12f,sp.design==5?1.7f:1.2f},body);
         if(sp.design==4) {
+            litBox({0,.22f,length*.5f},{width+.3f,.1f,.5f},accent);
+            litBox({0,.25f,-length*.5f},{width+.3f,.15f,.3f},dark);
+        }
+        if(sp.design==4) {
             litBox({-.9f,.7f,-1.4f},{.3f,.16f,1.2f},accent);
             litBox({.9f,.7f,-1.4f},{.3f,.16f,1.2f},accent);
+        }
+        if(sp.design==1) {
+            litBox({-1.05f,.3f,0},{.2f,.2f,3.2f},accent);
+            litBox({1.05f,.3f,0},{.2f,.2f,3.2f},accent);
+        }
+        if(sp.design==1) {
+            litBox({0,.95f,-1.5f},{width*.6f,.5f,1.1f},dark);
+            litBox({-.3f,.7f,-2.15f},{.18f,.18f,.4f},accent);
+            litBox({.3f,.7f,-2.15f},{.18f,.18f,.4f},accent);
         }
         if(sp.design==1 || sp.design==4 || sp.design==7) {
             litBox({0,1.f,-length*.44f},{width+.2f,.12f,.45f},accent);
             litBox({-.7f,.8f,-length*.44f},{.12f,.4f,.2f},dark);
             litBox({.7f,.8f,-length*.44f},{.12f,.4f,.2f},dark);
         }
-        if(sp.design==3) litBox({0,.85f,1.1f},{.9f,.25f,1.2f},dark);
+        if(sp.design==3) {
+            litBox({0,.85f,1.1f},{.9f,.25f,1.2f},dark);
+            litBox({0,.4f,length*.5f+.15f},{.8f,.12f,.5f},accent); // nose cone lip
+        }
+        if(sp.design==5) DrawCylinderEx({0,1.55f,-.5f},{0,2.15f,-.5f},.03f,.01f,4,accent);
         if(sp.design==7) {
             litBox({-1.1f,.45f,0},{.3f,.5f,3.3f},accent);
             litBox({1.1f,.45f,0},{.3f,.5f,3.3f},accent);
@@ -233,10 +254,16 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
         for(int side=-1;side<=1;side+=2)
             litBox({side*width*.34f,.52f,length*.5f+.02f},{.42f,.15f,.1f},{220,245,255,body.a});
     }
-    float wr = sp.radius * 0.42f;
+    bool bigWheels = (sp.design == 2 || sp.design == 6);
+    float wr = sp.radius * (bigWheels ? 0.52f : sp.design == 5 ? 0.36f : 0.42f);
+    float track = (sp.design == 5) ? 1.15f : (sp.design == 4 ? 1.45f : 1.3f);
     for (int sx = -1; sx <= 1; sx += 2)
-        for (int sz = -1; sz <= 1; sz += 2)
-            DrawCylinderEx({sx * 1.0f, wr, sz * 1.4f}, {sx * 1.3f, wr, sz * 1.4f}, wr, wr, 10, {22, 24, 30, body.a});
+        for (int sz = -1; sz <= 1; sz += 2) {
+            float wz = sz * (bigWheels ? 1.45f : 1.4f);
+            DrawCylinderEx({sx * (track - 0.3f), wr, wz}, {sx * track, wr, wz}, wr, wr, 10, {22, 24, 30, body.a});
+            if (bigWheels) // hub
+                DrawCylinderEx({sx * track, wr, wz}, {sx * (track + 0.05f), wr, wz}, wr * 0.45f, wr * 0.45f, 8, {120,128,140,body.a});
+        }
     if (c.boostLeft > 0.f) {
         litBox({0, 0.45f, -2.6f}, {1.4f, 0.3f, 0.9f}, {255, 200, 40, body.a});
         litBox({0, 0.45f, -3.2f}, {0.9f, 0.2f, 0.7f}, {255, 120, 20, body.a});
