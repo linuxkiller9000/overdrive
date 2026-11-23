@@ -38,6 +38,8 @@ struct CarSpec {
     float boostAccel = 12.f;   // extra accel while boosting
     float boostTime = 2.5f;    // seconds per charge
     float radius = 1.1f;       // collision radius
+    int design = 0;            // original body design ID
+    float durability = 100.f;   // maximum health, used by impact damage/combat
     float mass = 1.f;          // collision inertia (shared with player vehicles)
 };
 
@@ -53,6 +55,7 @@ AITune difficultyTune(int level); // 0 easy, 1 normal, 2 hard
 
 struct Car {
     Vec2 pos, vel;
+    float health = 100.f;
     float heading = 0;
     int nextCp = 1;
     int lap = 0;
@@ -129,6 +132,8 @@ struct Settings {
         keyHandbrake = 32, keyBoost = 340 /*left shift*/, keyPause = 256 /*esc*/;
     float padDeadzone = 0.18f, padSteerSens = 1.0f;
     int bestLapMs = -1, bestRaceMs = -1;
+    int credits = 0, racesCompleted = 0, wins = 0;
+    unsigned unlocked = 7; // first three vehicles owned, the rest earned offline
 };
 
 // Pure input mapping shared by the interactive path (polled hardware) and the
@@ -139,6 +144,9 @@ CarInput mapKeys(const Settings& s, const RawKeys& k);
 CarInput mapGamepad(const Settings& s, const RawPad& p);
 CarInput mergeInputs(CarInput a, CarInput b); // analog steer: nonzero pad axis wins
 
+int vehicleUnlockCost(int index);
+bool unlockVehicle(Settings& s, int index);
+void awardRace(Settings& s, int place); // once per completed player race
 bool saveSettings(const Settings& s, const std::string& path);
 Settings loadSettings(const std::string& path); // corrupt/missing -> defaults
 

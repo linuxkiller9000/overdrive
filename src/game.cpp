@@ -72,7 +72,7 @@ Model windowMesh(const std::vector<Vector3>& buildings) {
                 if (rnd() < 0.45f) continue; // lights out
                 Color wc = (rnd() < 0.5f) ? warm : cool;
                 wc.r = (unsigned char)(wc.r * (0.5f + 0.5f * rnd()));
-                float o = halfW + 0.12f, w = 3.2f, h = 1.1f;
+                float o = halfW + 0.22f, w = 3.2f, h = 1.1f;
                 Vector3 v0, v1, v2, v3;
                 if (face == 0)      { v0={b.x+o,y-h,b.z-w}; v1={b.x+o,y-h,b.z+w}; v2={b.x+o,y+h,b.z+w}; v3={b.x+o,y+h,b.z-w}; }
                 else if (face == 1) { v0={b.x-o,y-h,b.z+w}; v1={b.x-o,y-h,b.z-w}; v2={b.x-o,y+h,b.z-w}; v3={b.x-o,y+h,b.z+w}; }
@@ -132,6 +132,8 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
                 bool tooClose = false;
                 for (auto& tp : t.center)
                     if (sim::len(sim::Vec2{x, z} - tp) < t.halfWidth + 32.f) { tooClose = true; break; }
+                for (auto& placed : tm.buildings)
+                    if (sim::len(sim::Vec2{x-placed.x,z-placed.z}) < 15.f) { tooClose=true; break; }
                 if (tooClose) continue;
                 float h = 12.f + rnd() * 42.f;
                 tm.buildings.push_back({x, h * 0.5f, z});
@@ -160,6 +162,22 @@ void litBox(Vector3 p, Vector3 size, Color color) {
     rlEnd();
 }
 
+// Eight-corner tapered shell, original low-poly chassis with sloping bodywork.
+void bodyShell(float width,float length,float belt,float roof,Color col) {
+    Vector3 q[8]={{-width*.48f,.28f,-length*.5f},{width*.48f,.28f,-length*.5f},
+      {width*.48f,.28f,length*.5f},{-width*.48f,.28f,length*.5f},
+      {-width*.42f,belt,-length*.43f},{width*.42f,belt,-length*.43f},
+      {width*.35f,roof,length*.5f},{-width*.35f,roof,length*.5f}};
+    int faces[6][4]={{0,1,5,4},{1,2,6,5},{2,3,7,6},{3,0,4,7},{4,5,6,7},{3,2,1,0}};
+    float light[6]={.65f,.55f,.8f,.72f,1.f,.4f};
+    rlBegin(RL_QUADS);
+    for(int f=0;f<6;f++) {
+        rlColor4ub((unsigned char)(col.r*light[f]),(unsigned char)(col.g*light[f]),(unsigned char)(col.b*light[f]),col.a);
+        for(int j=0;j<4;j++){Vector3 v=q[faces[f][3-j]];rlVertex3f(v.x,v.y,v.z);}
+    }
+    rlEnd();
+}
+
 void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Matrix m = MatrixMultiply(MatrixRotateY(PI * 0.5f - c.heading), MatrixTranslate(c.pos.x, 0, c.pos.y));
     rlPushMatrix();
@@ -168,20 +186,52 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Color glass{35, 65, 90, body.a};
     Color accent = (sp.name == "SPRINTER") ? Color{255, 200, 40, body.a} : (sp.name == "HAULER") ? Color{230, 230, 240, 255} : Color{0, 229, 220, 255};
     accent.a = body.a;
-    if (sp.name == "HAULER") {
-        litBox({0, 0.75f, 0}, {2.6f, 1.1f, 4.6f}, body);
-        litBox({0, 1.45f, -0.4f}, {2.2f, 0.6f, 2.6f}, glass);
-        litBox({0, 0.75f, -2.35f}, {2.6f, 0.5f, 0.2f}, accent);
+    float width=sp.design==5?1.65f:sp.design==6?2.5f:sp.design==4?2.3f:sp.design==7?1.9f:2.1f;
+    if (sp.design == 2 || sp.design == 6) {
+        litBox({0,.8f,0},{width,1.f,4.5f},body);
+        litBox({0,1.5f,.55f},{width*.83f,.75f,2.2f},glass);
+        for(int side=-1;side<=1;side+=2) litBox({side*width*.34f,.8f,2.28f},{.45f,.2f,.12f},{220,245,255,body.a});
+        litBox({0,.7f,-2.28f},{width*.8f,.18f,.12f},{255,30,60,body.a});
+        litBox({0,1.92f,.55f},{width*.9f,.12f,2.3f},body);
+        if(sp.design==6) {
+            litBox({0,2.08f,.55f},{width,.18f,2.5f},dark);
+            litBox({0,.7f,2.3f},{width,.25f,.2f},accent);
+        } else litBox({0,1.22f,-1.45f},{width*.8f,.15f,1.3f},dark);
     } else {
-        float nose = (sp.name == "SPRINTER") ? 0.9f : 0.7f;
-        litBox({0, 0.35f, 1.55f}, {1.9f, 0.35f, 1.3f}, dark);
-        litBox({0, 0.5f, 0}, {2.1f, 0.55f, 3.2f}, body);
-        litBox({0, 0.95f, -0.25f}, {1.5f, 0.45f, 1.6f}, glass);
-        litBox({0, 0.85f, -1.85f}, {2.0f, 0.08f, 0.5f}, accent);
-        litBox({-0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
-        litBox({0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
-        litBox({0, 0.42f, -1.65f}, {1.8f, 0.18f, 0.1f}, {255, 30, 60, body.a});
-        litBox({0, 0.28f, nose + 1.6f}, {1.7f, 0.12f, 0.3f}, accent);
+        float length=sp.design==3?4.9f:sp.design==5?3.4f:sp.design==4?4.5f:sp.design==7?4.7f:4.2f;
+        bodyShell(width,length,sp.design==3?.9f:.72f,sp.design==7?.35f:.52f,body);
+        // Sloped hood and windscreen formed as original low-poly triangular panels.
+        rlBegin(RL_TRIANGLES);
+        rlColor4ub(body.r,body.g,body.b,body.a);
+        float w=width*.5f,z=length*.5f;
+        rlVertex3f(-w,.7f,.55f);rlVertex3f(w,.7f,.55f);rlVertex3f(w,.3f,z);
+        rlVertex3f(-w,.7f,.55f);rlVertex3f(w,.3f,z);rlVertex3f(-w,.3f,z);
+        rlEnd();
+        float roof=sp.design==7?1.05f:sp.design==4?1.18f:sp.design==5?1.5f:1.3f;
+        if(sp.design==7) {
+            rlPushMatrix();rlTranslatef(0,.93f,-.4f);rlScalef(1.f,.65f,1.45f);
+            DrawSphereEx({0,0,0},.72f,6,8,glass);rlPopMatrix();
+        } else {
+            litBox({0,sp.design==5?1.1f:.95f,sp.design==3?-.65f:-.25f},{width*.72f,sp.design==5?.8f:.55f,sp.design==5?1.8f:1.6f},glass);
+        }
+        if(sp.design!=7) litBox({0,roof,sp.design==3?-.7f:-.3f},{width*.65f,.12f,sp.design==5?1.7f:1.2f},body);
+        if(sp.design==4) {
+            litBox({-.9f,.7f,-1.4f},{.3f,.16f,1.2f},accent);
+            litBox({.9f,.7f,-1.4f},{.3f,.16f,1.2f},accent);
+        }
+        if(sp.design==1 || sp.design==4 || sp.design==7) {
+            litBox({0,1.f,-length*.44f},{width+.2f,.12f,.45f},accent);
+            litBox({-.7f,.8f,-length*.44f},{.12f,.4f,.2f},dark);
+            litBox({.7f,.8f,-length*.44f},{.12f,.4f,.2f},dark);
+        }
+        if(sp.design==3) litBox({0,.85f,1.1f},{.9f,.25f,1.2f},dark);
+        if(sp.design==7) {
+            litBox({-1.1f,.45f,0},{.3f,.5f,3.3f},accent);
+            litBox({1.1f,.45f,0},{.3f,.5f,3.3f},accent);
+        }
+        litBox({0,.49f,-length*.5f-.03f},{width*.85f,.16f,.1f},{255,30,60,body.a});
+        for(int side=-1;side<=1;side+=2)
+            litBox({side*width*.34f,.52f,length*.5f+.02f},{.42f,.15f,.1f},{220,245,255,body.a});
     }
     float wr = sp.radius * 0.42f;
     for (int sx = -1; sx <= 1; sx += 2)
@@ -444,7 +494,7 @@ struct MenuResult { bool quit = false; };
 
 // returns true if the user chose "race"
 static void drawTitle(const GameApp& app, int sel) {
-    const char* items[] = {"START RACE", "VEHICLE", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
+    const char* items[] = {"START RACE", "GARAGE", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
@@ -463,24 +513,83 @@ static void drawTitle(const GameApp& app, int sel) {
     EndDrawing();
 }
 
+static bool menuPressed(int key, int button) {
+    return IsKeyPressed(key) || (IsGamepadAvailable(0) && IsGamepadButtonPressed(0,button));
+}
+static void drawGarage(GameApp& app, int selected, float rotation) {
+    auto roster=sim::defaultRoster(); const auto& v=roster[selected];
+    bool owned=(app.settings.unlocked&(1u<<selected))!=0;
+    int W=GetScreenWidth(), H=GetScreenHeight();
+    BeginDrawing(); ClearBackground({10,15,26,255});
+    DrawRectangleGradientV(0,0,W,H,{16,28,46,255},{6,9,16,255});
+    DrawRectangle(0,0,W,5,{0,215,220,255});
+    DrawText("OVERDRIVE / GARAGE",44,30,28,{150,170,190,255});
+    DrawText(TextFormat("%02d / 08",selected+1),44,80,22,{0,215,220,255});
+    DrawText(v.name.c_str(),44,112,48,WHITE);
+    DrawText(TextFormat("CREDITS  %d",app.settings.credits),W-300,36,24,GOLD);
+    Camera3D gc{{7,4,8},{0,.6f,0},{0,1,0},40,CAMERA_PERSPECTIVE};
+    BeginMode3D(gc);
+    DrawCylinder({0,-.15f,0},3.8f,3.8f,.18f,48,{30,44,59,255});
+    DrawCylinderWires({0,-.04f,0},3.9f,3.9f,.05f,48,{0,190,210,255});
+    sim::Car car;car.heading=rotation;
+    const Color paints[8]={{215,225,235,255},{255,161,52,255},{110,142,165,255},{215,55,60,255},{155,85,220,255},{65,200,165,255},{210,173,109,255},{80,150,230,255}};
+    drawCar(car,v,paints[selected]);
+    EndMode3D();
+    int x=W-365,y=130;
+    DrawRectangle(x-22,y-20,360,430,{7,13,23,240});
+    const char* labels[]={"ACCELERATION","TOP SPEED","STEERING","GRIP","DRIFT SLIDE","BRAKING","DURABILITY","BOOST"};
+    float values[]={v.accel/20.f,v.maxSpeed/50.f,v.steerRate/3.5f,v.grip/13.f,1.f-v.driftGrip/4.f,v.brake/30.f,v.durability/180.f,v.boostAccel/20.f};
+    const auto& current=roster[app.settings.playerVehicle];
+    float comp[]={current.accel/20.f,current.maxSpeed/50.f,current.steerRate/3.5f,current.grip/13.f,1.f-current.driftGrip/4.f,current.brake/30.f,current.durability/180.f,current.boostAccel/20.f};
+    for(int i=0;i<8;i++) {
+        DrawText(labels[i],x,y+i*48,16,{160,180,200,255});
+        DrawRectangle(x,y+22+i*48,260,8,{38,49,66,255});
+        DrawRectangle(x,y+22+i*48,(int)(260*values[i]),8,{0,210,210,255});
+        DrawRectangle(x+(int)(260*comp[i]),y+18+i*48,2,16,GOLD);
+    }
+    DrawText("Gold marker: equipped vehicle",x,y+390,14,GOLD);
+    DrawText(TextFormat("%.0f km/h  |  %.0f HP  |  %.1fs boost",v.maxSpeed*3.6f,v.durability,v.boostTime),44,H-150,20,{150,170,190,255});
+    DrawText(owned?(selected==app.settings.playerVehicle?"EQUIPPED":"ENTER / A: EQUIP"):TextFormat("ENTER / A: UNLOCK  %d CR",sim::vehicleUnlockCost(selected)),44,H-106,24,owned?WHITE:GOLD);
+    DrawText("LEFT / RIGHT: browse    ESC / B: back",44,H-58,20,{150,170,190,255});
+    EndDrawing();
+}
+static void garageMenu(GameApp& app) {
+    int selected=app.settings.playerVehicle;
+    while(!WindowShouldClose()) {
+        if(menuPressed(KEY_ESCAPE,GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) break;
+        if(menuPressed(KEY_LEFT,GAMEPAD_BUTTON_LEFT_FACE_LEFT)) selected=(selected+7)%8;
+        if(menuPressed(KEY_RIGHT,GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) selected=(selected+1)%8;
+        if(menuPressed(KEY_ENTER,GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
+            bool owned=(app.settings.unlocked&(1u<<selected))!=0;
+            if(owned || sim::unlockVehicle(app.settings,selected)) {
+                app.settings.playerVehicle=selected;
+                sim::saveSettings(app.settings,app.settingsPath);
+            }
+        }
+        drawGarage(app,selected,(float)GetTime()*.28f);
+    }
+}
+
+
 static bool titleMenu(GameApp& app) {
     int sel = 0;
+    if(app.settings.playerVehicle<0 || app.settings.playerVehicle>=8 || !(app.settings.unlocked&(1u<<app.settings.playerVehicle))) app.settings.playerVehicle=0;
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     while (!WindowShouldClose()) {
-        if (IsKeyPressed(KEY_UP)) sel = (sel + 6) % 7;
-        if (IsKeyPressed(KEY_DOWN)) sel = (sel + 1) % 7;
+        if (menuPressed(KEY_UP,GAMEPAD_BUTTON_LEFT_FACE_UP)) sel = (sel + 6) % 7;
+        if (menuPressed(KEY_DOWN,GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel = (sel + 1) % 7;
         if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_RIGHT)) {
             int d = IsKeyPressed(KEY_LEFT) ? -1 : 1;
-            if (sel == 1) app.settings.playerVehicle = (app.settings.playerVehicle + (int)roster.size() + d) % (int)roster.size();
+            if (sel == 1) garageMenu(app);
             if (sel == 2) app.settings.aiDifficulty = (app.settings.aiDifficulty + 3 + d) % 3;
             if (sel == 3) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
             if (sel == 4) app.settings.quality = 1 - app.settings.quality;
             if (sel == 5) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
         }
-        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
+        if (menuPressed(KEY_ENTER,GAMEPAD_BUTTON_RIGHT_FACE_DOWN) || IsKeyPressed(KEY_SPACE)) {
             if (sel == 0) return true;
             if (sel == 6) return false;
-            if (sel == 1) app.settings.playerVehicle = (app.settings.playerVehicle + 1) % (int)roster.size();
+            if (sel == 1) garageMenu(app);
             if (sel == 2) app.settings.aiDifficulty = (app.settings.aiDifficulty + 1) % 3;
             if (sel == 3) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
             if (sel == 4) app.settings.quality = 1 - app.settings.quality;
@@ -548,6 +657,7 @@ static void resultsScreen(GameApp& app, const sim::Race& race) {
     const sim::Car& p = race.cars[0];
     // persist bests
     updateRecords(app.settings, p);
+    sim::awardRace(app.settings, p.finishPlace);
     sim::saveSettings(app.settings, app.settingsPath);
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) return;
@@ -677,7 +787,7 @@ int runUITest(GameApp& app) {
     bool polledOk = true;
     double acc = 0;
     for (int f = 0; f < 60 * 200 && !race.cars[0].finished && !WindowShouldClose(); f++) {
-        acc += GetFrameTime();
+        acc += sim::STEP * 3; // bounded scripted runtime smoke, not a performance benchmark
         sim::CarInput hw = race.countdown > 0.f ? sim::CarInput{} : readInput(app.settings);
         if (hw.throttle < 0.f || hw.steer < -1.f || hw.steer > 1.f) polledOk = false;
         sim::CarInput aiIn = sim::aiDrive(race, 0);
@@ -694,7 +804,7 @@ int runUITest(GameApp& app) {
             updateChaseCam(cam, cc, race, sim::STEP);
             acc -= sim::STEP;
         }
-        drawFrame(race, tm, cam, app, in.steer);
+        if(f%8==0) drawFrame(race, tm, cam, app, in.steer);
     }
     CloseWindow();
     std::printf("uitest: polledOk=%d finished=%d progress=%.1f\n", (int)polledOk,
@@ -716,6 +826,10 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
     TakeScreenshot((prefix + "-pause.png").c_str());
     sim::Race race;
     race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle);
+    for(int v=0;v<8;v++) {
+        drawGarage(app,v,.65f);
+        TakeScreenshot((prefix+"-garage-"+std::to_string(v)+".png").c_str());
+    }
     // simulate a finished race for the results frame
     for (int f = 0; f < 60 * 400 && !race.cars[0].finished; f++) {
         sim::CarInput aiIn = sim::aiDrive(race, 0);

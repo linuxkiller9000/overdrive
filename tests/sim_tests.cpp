@@ -153,7 +153,32 @@ int runTests() {
         float dvHauler = sim::len(r7.cars[hi].vel - vh);
         CHECK(dvPlayer > dvHauler, "heavier vehicle wins the shove");
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (11 groups)\n");
+    // Eight vehicles: real gameplay parameters, race completion and durable saves.
+    {
+        auto roster=sim::defaultRoster(); CHECK(roster.size()==8,"eight vehicle roster");
+        for(int v=0;v<8;v++) {
+            CHECK(roster[v].design==v,"unique vehicle design ID");
+            CHECK(roster[v].durability>0 && roster[v].boostAccel>0,"usable durability and boost");
+            sim::Race race;race.init(1,1,v);
+            CHECK(race.specs[0].name==roster[v].name,"selected spec used in race");
+            CHECK(race.cars[0].health==roster[v].durability,"health initialized from durability");
+            for(int f=0;f<60*240 && !race.cars[0].finished;f++)
+                race.step({sim::aiDrive(race,0),sim::aiDrive(race,1),sim::aiDrive(race,2)});
+            CHECK(race.cars[0].finished,"each vehicle completes full lap");
+        }
+        sim::Settings progress; CHECK(!sim::unlockVehicle(progress,7),"no free locked unlock");
+        sim::awardRace(progress,1); CHECK(progress.credits==120 && progress.wins==1,"win rewards");
+        sim::awardRace(progress,2); CHECK(progress.credits==200 && progress.racesCompleted==2,"finish rewards");
+        CHECK(sim::unlockVehicle(progress,3),"earned unlock succeeds");
+        CHECK(progress.credits==0 && (progress.unlocked&8),"unlock charges once");
+        CHECK(!sim::unlockVehicle(progress,3),"owned vehicle cannot be charged twice");
+        progress.aiDifficulty=2;progress.laps=5;
+        CHECK(sim::saveSettings(progress,"/tmp/od_progress.cfg"),"progress save");
+        auto loaded=sim::loadSettings("/tmp/od_progress.cfg");
+        CHECK(loaded.unlocked==15 && loaded.wins==1 && loaded.racesCompleted==2,"garage progress reloads");
+        CHECK(loaded.aiDifficulty==2 && loaded.laps==5,"difficulty and laps persist");
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (12 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }

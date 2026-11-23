@@ -5,6 +5,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <cstdlib>
+#include <filesystem>
 
 int runTests();
 
@@ -12,12 +13,12 @@ static std::string settingsPath() {
 #ifdef _WIN32
     const char* base = getenv("APPDATA");
     std::string dir = std::string(base ? base : ".") + "\\overdrive";
-    mkdir(dir.c_str());
+    std::filesystem::create_directories(dir);
     return dir + "\\settings.cfg";
 #else
     const char* home = getenv("HOME");
     std::string dir = std::string(home ? home : ".") + "/.config/overdrive";
-    mkdir(dir.c_str(), 0755);
+    std::filesystem::create_directories(dir);
     return dir + "/settings.cfg";
 #endif
 }

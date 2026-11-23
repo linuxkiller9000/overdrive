@@ -78,3 +78,24 @@ functional garage, four distinct track layouts/environments, eight combat
 powerups, six modes, fair multi-opponent AI, two-player split-screen, actual
 controls settings, configurable original audio, offline progression and full
 source/Linux/Windows release packaging. No feature is silently dropped.
+
+## Garage functional checkpoint
+
+- Modular eight-entry physical roster in src/vehicles.cpp. Race grids remain
+  three cars for now, selecting the chosen player spec plus two fair AI specs.
+- Garage turntable preview, comparison bars against equipped car, numerical
+  speed/HP/boost-duration summary, keyboard/pad browse/equip/unlock/back actions.
+- Offline credits/unlocks/races/wins persisted with settings. Three initial
+  cars owned, five purchased with earned race rewards only, no real spending.
+- Maximum health initialized from durability, wall impacts reduce it. Combat
+  destruction and health-based handling are not yet implemented.
+- Original tapered shell geometry and eight body variants. Still early art:
+  proportions/materials need further design work before release.
+- Corrected missing aiDifficulty/laps serialization and nested config-directory
+  creation. Added roster/progress/each-car-completes-race checks (12 groups pass).
+- Both Linux and Windows targets compile. Accelerated scripted runtime smoke
+  test under Xvfb: polledOk=1, finished=1. This calls real hardware polling but
+  injects scripted inputs through shared mapping; it does not verify key events.
+- Real-time smoke attempt was interrupted at the command execution timeout;
+  no pass claimed for that attempt. A separate fresh X display then completed
+  the bounded scripted test. Windows runtime remains unverified.

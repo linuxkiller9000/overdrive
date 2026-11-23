@@ -92,15 +92,6 @@ std::vector<Vec2> neonLoopControlPoints() {
     };
 }
 
-std::vector<CarSpec> defaultRoster() {
-    CarSpec balanced;  balanced.name = "STANDARD";
-    CarSpec sprinter;  sprinter.name = "SPRINTER";
-    sprinter.accel = 18.f; sprinter.maxSpeed = 39.f; sprinter.steerRate = 2.4f; sprinter.mass = 0.85f;
-    CarSpec heavy;     heavy.name = "HAULER";
-    heavy.accel = 11.f; heavy.maxSpeed = 45.f; heavy.grip = 11.f; heavy.driftGrip = 3.f;
-    heavy.radius = 1.3f; heavy.mass = 1.6f;
-    return {balanced, sprinter, heavy};
-}
 
 AITune difficultyTune(int level) {
     AITune t;
@@ -113,6 +104,7 @@ void Race::init(int laps, int aiDifficulty, int playerVehicle) {
     lapsToWin = laps;
     tick = 0; countdown = 3.2f; finishedCount = 0;
     specs = defaultRoster();
+    specs.resize(3); // current race grid stays three cars until opponent-count milestone
     // player drives the chosen vehicle; AI take the other specs, same physical limits
     std::vector<CarSpec> roster = defaultRoster();
     specs[0] = roster[playerVehicle % (int)roster.size()];
@@ -127,6 +119,7 @@ void Race::init(int laps, int aiDifficulty, int playerVehicle) {
     Vec2 right = {-dir.y, dir.x};
     for (int i = 0; i < nCars; i++) {
         Car c;
+        c.health = specs[i].durability;
         // grid: two columns behind the start line
         float back = -8.f - 7.f * (i / 2);
         float side = (i % 2 == 0 ? 3.f : -3.f);
@@ -209,7 +202,7 @@ static void stepCar(Race& r, Car& c, const CarSpec& sp, const CarInput& in) {
         Vec2 nrm = off * (1.f / dist);
         c.pos = onTrack + nrm * maxD;
         float vn = dot(c.vel, nrm);
-        if (vn > 0) c.vel = c.vel - nrm * (vn * 1.4f); // slight bounce
+        if (vn > 0) { c.vel = c.vel - nrm * (vn * 1.4f); c.health = fmaxf(0.f, c.health - fmaxf(0.f, vn - 4.f) * .35f); } // slight bounce
     }
 
     // Checkpoints and laps.
@@ -327,6 +320,8 @@ bool saveSettings(const Settings& s, const std::string& path) {
       << "\nkeyLeftAlt " << s.keyLeftAlt << "\nkeyRightAlt " << s.keyRightAlt
       << "\nkeyHandbrake " << s.keyHandbrake << "\nkeyBoost " << s.keyBoost << "\nkeyPause " << s.keyPause
       << "\npadDeadzone " << s.padDeadzone << "\npadSteerSens " << s.padSteerSens
+      << "\naiDifficulty " << s.aiDifficulty << "\nlaps " << s.laps
+      << "\ncredits " << s.credits << "\nracesCompleted " << s.racesCompleted << "\nwins " << s.wins << "\nunlocked " << s.unlocked
       << "\nbestLapMs " << s.bestLapMs << "\nbestRaceMs " << s.bestRaceMs << "\n";
     return f.good();
 }
@@ -366,6 +361,10 @@ Settings loadSettings(const std::string& path) {
             else if (key == "keyPause") tmp.keyPause = std::stoi(val);
             else if (key == "padDeadzone") tmp.padDeadzone = std::stof(val);
             else if (key == "padSteerSens") tmp.padSteerSens = std::stof(val);
+            else if (key == "credits") tmp.credits = std::stoi(val);
+            else if (key == "racesCompleted") tmp.racesCompleted = std::stoi(val);
+            else if (key == "wins") tmp.wins = std::stoi(val);
+            else if (key == "unlocked") tmp.unlocked = (unsigned)std::stoul(val);
             else if (key == "bestLapMs") tmp.bestLapMs = std::stoi(val);
             else if (key == "bestRaceMs") tmp.bestRaceMs = std::stoi(val);
         } catch (...) { return s; }
