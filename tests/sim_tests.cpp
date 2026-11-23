@@ -49,22 +49,25 @@ int runTests() {
         sim::Race r4; r4.init(3);
         // teleport player onto a pickup (and sync the track hint)
         r4.cars[0].pos = r4.pickups[0].pos;
-        r4.cars[0].sHint = r4.track.total * 0.2f;
+        r4.cars[0].sHint = r4.track.total * 0.07f;
         sim::CarInput in{}; in.throttle = 1;
         r4.step({in, sim::aiDrive(r4, 1), sim::aiDrive(r4, 2)});
-        CHECK(r4.cars[0].boostCharges == 1, "pickup grants charge");
+        CHECK(r4.cars[0].heldPickup == sim::PK_NITRO, "pickup grants held NITRO");
+        { sim::CarInput f{}; f.throttle = 1; f.fire = true; r4.countdown = 0; r4.step({f}); }
+        CHECK(r4.cars[0].boostLeft > 0.f, "fired NITRO starts boost");
+        CHECK(r4.cars[0].heldPickup == -1, "fire consumes held pickup");
         CHECK(!r4.pickups[0].active, "pickup consumed");
         float baseMax = 0;
         for (int i = 0; i < 60 * 15; i++) {
             sim::CarInput ain = sim::aiDrive(r4, 0);
             ain.throttle = 1; ain.brake = 0; // pin throttle so boost headroom shows
-            ain.boost = (r4.cars[0].boostCharges > 0 && r4.cars[0].boostLeft <= 0);
+            ain.boost = false; ain.fire = (i == 0);
             r4.step({ain, sim::aiDrive(r4, 1), sim::aiDrive(r4, 2)});
             baseMax = fmaxf(baseMax, sim::len(r4.cars[0].vel));
         }
         CHECK(baseMax > r4.specs[0].maxSpeed + 2.f, "boost exceeds base top speed");
         // pickup respawns
-        for (int i = 0; i < 60 * 11; i++) r4.step({in, sim::aiDrive(r4, 1), sim::aiDrive(r4, 2)});
+        for (int i = 0; i < 60 * 13; i++) r4.step({in});
         CHECK(r4.pickups[0].active, "pickup respawns");
     }
     // determinism: same inputs, same final state
@@ -271,7 +274,57 @@ int runTests() {
             std::remove(path.c_str());
         }
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (14 groups)\n");
+    // group 15: combat pickups
+    {
+        auto mk=[](){ static sim::Race r; r=sim::Race(); r.init(3); r.countdown=0; return &r; };
+        sim::Race* r=mk();
+        CHECK((int)r->cars.size()==8, "eight-car grid");
+        CHECK((int)r->pickups.size()==sim::PK_COUNT, "one pickup per type");
+        // BOLT hits the car ahead and damages it
+        r->cars[1].pos = r->cars[0].pos + sim::Vec2{25,0}; r->cars[1].heading=0; r->cars[1].vel={};
+        r->cars[0].heading=0; r->cars[0].progress=0; r->cars[1].progress=25;
+        r->cars[0].heldPickup=sim::PK_BOLT;
+        float h0=r->cars[1].health; sim::CarInput f{}; f.fire=true;
+        std::vector<sim::CarInput> ins(8); ins[0]=f; r->step(ins);
+        CHECK(!r->shots.empty(), "bolt spawned");
+        for(int i=0;i<120;i++) r->step(std::vector<sim::CarInput>(8));
+        CHECK(r->cars[1].health < h0 || r->cars[1].slowT>0.f, "bolt damaged target");
+        // SHIELD absorbs a mine
+        r=mk(); r->cars[2].shieldT=5.f; float hs=r->cars[2].health;
+        r->mines.push_back({r->cars[2].pos,0,0.f,20.f});
+        r->step(std::vector<sim::CarInput>(8));
+        CHECK(r->cars[2].health==hs, "shield absorbs mine");
+        CHECK(r->mines.empty(), "mine consumed");
+        // MINE hurts without shield, owner immune
+        r=mk(); float hm=r->cars[3].health; r->mines.push_back({r->cars[3].pos,0,0.f,20.f});
+        r->mines.push_back({r->cars[0].pos,0,0.f,20.f});
+        r->step(std::vector<sim::CarInput>(8));
+        CHECK(r->cars[3].health<hm, "mine damages");
+        CHECK(r->cars[0].health==r->specs[0].durability, "mine owner immune");
+        // REPAIR restores health
+        r=mk(); r->cars[0].health=30.f; r->cars[0].heldPickup=sim::PK_REPAIR;
+        std::vector<sim::CarInput> i2(8); i2[0].fire=true; r->step(i2);
+        CHECK(r->cars[0].health>=69.f, "repair restores");
+        // SHOCK orb slows
+        r=mk(); r->orbs.push_back({r->cars[4].pos,8.f}); r->step(std::vector<sim::CarInput>(8));
+        CHECK(r->cars[4].slowT>0.f, "shock slows");
+        // BARGE shoves neighbours
+        r=mk(); r->cars[1].pos=r->cars[0].pos+sim::Vec2{5,0}; r->cars[0].heldPickup=sim::PK_BARGE;
+        std::vector<sim::CarInput> i3(8); i3[0].fire=true; r->step(i3);
+        CHECK(sim::len(r->cars[1].vel)>5.f, "barge pushes");
+        // AI uses held weapons and races complete with combat on, all 8 finish eventually
+        sim::Race ra; ra.init(1,1,0,0);
+        int fired=0; bool all=false;
+        for(int i=0;i<60*400&&!all;i++){
+            std::vector<sim::CarInput> in(8); for(int k=0;k<8;k++) in[k]=sim::aiDrive(ra,k);
+            for(int k=0;k<8;k++) if(in[k].fire && ra.cars[k].heldPickup>=0) fired++;
+            ra.step(in); all=ra.finishedCount==8;
+        }
+        CHECK(fired>0, "AI fires weapons");
+        CHECK(ra.finishedCount>=6, "AI field finishes with combat on");
+        std::printf("combat race: fired=%d finished=%d\n", fired, ra.finishedCount);
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (15 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }

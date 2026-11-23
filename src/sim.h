@@ -24,6 +24,7 @@ struct CarInput {
     float steer = 0;      // -1..1 (left negative)
     bool handbrake = false;
     bool boost = false;
+    bool fire = false;    // use held combat pickup
 };
 
 struct CarSpec {
@@ -50,12 +51,16 @@ struct AITune {
     float wobbleMag = 0.2f;    // mistake magnitude (rad applied to steer)
     int wobbleMask = 0x3FF;    // mistake frequency: rand()&mask == 0
     bool usesBoost = true;
+    int fireMask = 0x7F;       // weapon-decision cadence: rand()&mask == 0
 };
 AITune difficultyTune(int level); // 0 easy, 1 normal, 2 hard
 
 struct Car {
     Vec2 pos, vel;
     float health = 100.f;
+    int heldPickup = -1;     // PickupType, -1 = empty hands
+    float shieldT = 0;       // seconds of shield left; absorbs one hit
+    float slowT = 0;         // seconds of weapon-induced slowdown left
     float heading = 0;
     int nextCp = 1;
     int lap = 0;
@@ -70,11 +75,36 @@ struct Car {
     bool wrongWay = false;
 };
 
+// Combat pickup types (Blur-style loadout, usable identically by player and AI).
+enum PickupType {
+    PK_NITRO = 0, // instant boost charge + activation
+    PK_BOLT,      // homing projectile at the car ahead
+    PK_SHUNT,     // fast straight shot along the heading
+    PK_MINE,      // dropped behind, detonates on contact
+    PK_SHIELD,    // absorbs the next hit for a few seconds
+    PK_SHOCK,     // three slowing orbs placed on the line ahead
+    PK_BARGE,     // radial shove on close neighbours
+    PK_REPAIR,    // restore 40 health
+    PK_COUNT
+};
+const char* pickupName(int type);
+
 struct Pickup {
     Vec2 pos;
     bool active = true;
     float respawn = 0;
+    int type = 0;
 };
+
+struct Projectile {  // BOLT (homing) and SHUNT (straight)
+    Vec2 pos, vel;
+    int target = -1;   // car index for homing, -1 = straight
+    int owner = -1;
+    int type = PK_BOLT;
+    float ttl = 0;
+};
+struct Mine { Vec2 pos; int owner = -1; float arm = 0.6f; float ttl = 20.f; };
+struct ShockOrb { Vec2 pos; float ttl = 8.f; };
 
 struct Track {
     std::vector<Vec2> center;     // sampled closed centerline
@@ -105,6 +135,9 @@ struct Race {
     std::vector<Car> cars;
     std::vector<CarSpec> specs;
     std::vector<Pickup> pickups;
+    std::vector<Projectile> shots;
+    std::vector<Mine> mines;
+    std::vector<ShockOrb> orbs;
     int lapsToWin = 3;
     int finishedCount = 0;
     uint64_t tick = 0;
@@ -135,7 +168,8 @@ struct Settings {
     int laps = 3;               // 1, 3 or 5
     int keyAccel = 265, keyBrake = 264, keyLeft = 263, keyRight = 262, // arrows
         keyAccelAlt = 87, keyBrakeAlt = 83, keyLeftAlt = 65, keyRightAlt = 68, // WASD
-        keyHandbrake = 32, keyBoost = 340 /*left shift*/, keyPause = 256 /*esc*/;
+        keyHandbrake = 32, keyBoost = 340 /*left shift*/, keyPause = 256 /*esc*/,
+        keyFire = 69 /*E*/, keyFireAlt = 345 /*right ctrl*/;
     float padDeadzone = 0.18f, padSteerSens = 1.0f;
     int trackIndex = 0;
     int bestLapMs = -1, bestRaceMs = -1;      // legacy, migrated into per-track arrays
@@ -150,8 +184,8 @@ void updateRecords(Settings& s, const Car& p, int track);
 
 // Pure input mapping shared by the interactive path (polled hardware) and the
 // demo path (scripted axes), so both exercise the same translation to CarInput.
-struct RawKeys { bool accel = false, brake = false, left = false, right = false, handbrake = false, boost = false; };
-struct RawPad { float steerAxis = 0, accelAxis = 0; bool left = false, right = false, accel = false, brake = false, handbrake = false, boost = false; };
+struct RawKeys { bool accel = false, brake = false, left = false, right = false, handbrake = false, boost = false, fire = false; };
+struct RawPad { float steerAxis = 0, accelAxis = 0; bool left = false, right = false, accel = false, brake = false, handbrake = false, boost = false, fire = false; };
 CarInput mapKeys(const Settings& s, const RawKeys& k);
 CarInput mapGamepad(const Settings& s, const RawPad& p);
 CarInput mergeInputs(CarInput a, CarInput b); // analog steer: nonzero pad axis wins

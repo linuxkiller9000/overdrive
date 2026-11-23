@@ -86,16 +86,29 @@ float Track::nearest(Vec2 p, float hint) const {
 
 AITune difficultyTune(int level) {
     AITune t;
-    if (level == 0) { t.pace = 0.85f; t.steerGain = 1.7f; t.wobbleMag = 0.45f; t.wobbleMask = 0x7F; t.usesBoost = false; }
-    else if (level == 2) { t.pace = 1.0f; t.steerGain = 2.6f; t.wobbleMag = 0.08f; t.wobbleMask = 0xFFF; }
+    if (level == 0) { t.pace = 0.85f; t.steerGain = 1.7f; t.wobbleMag = 0.45f; t.wobbleMask = 0x7F; t.usesBoost = false; t.fireMask = 0x1FF; }
+    else if (level == 2) { t.pace = 1.0f; t.steerGain = 2.6f; t.wobbleMag = 0.08f; t.wobbleMask = 0xFFF; t.fireMask = 0x3F; }
     return t;
+}
+
+const char* pickupName(int type) {
+    switch (type) {
+        case PK_NITRO: return "NITRO";
+        case PK_BOLT: return "BOLT";
+        case PK_SHUNT: return "SHUNT";
+        case PK_MINE: return "MINE";
+        case PK_SHIELD: return "SHIELD";
+        case PK_SHOCK: return "SHOCK";
+        case PK_BARGE: return "BARGE";
+        case PK_REPAIR: return "REPAIR";
+        default: return "?";
+    }
 }
 
 void Race::init(int laps, int aiDifficulty, int playerVehicle, int trackIdx) {
     lapsToWin = laps;
     tick = 0; countdown = 3.2f; finishedCount = 0;
-    specs = defaultRoster();
-    specs.resize(3); // current race grid stays three cars until opponent-count milestone
+    specs = defaultRoster(); // full eight-car grid: player + seven AI, same physical rules
     // player drives the chosen vehicle; AI take the other specs, same physical limits
     std::vector<CarSpec> roster = defaultRoster();
     specs[0] = roster[playerVehicle % (int)roster.size()];
@@ -123,14 +136,16 @@ void Race::init(int laps, int aiDifficulty, int playerVehicle, int trackIdx) {
         c.sHint = 0;
         cars.push_back(c);
     }
-    // Boost pickups: three spots, alternating track sides.
+    // Combat pickups: one of each type around the lap, alternating road sides.
     pickups.clear();
-    for (int k = 0; k < 3; k++) {
-        float d = track.total * (0.2f + 0.3f * k);
+    shots.clear(); mines.clear(); orbs.clear();
+    for (int k = 0; k < PK_COUNT; k++) {
+        float d = track.total * (0.07f + 0.11f * k);
         Vec2 dd = track.dirAt(d);
         Vec2 rr = {-dd.y, dd.x};
         Pickup p;
-        p.pos = track.pointAt(d) + rr * (k % 2 == 0 ? 4.f : -4.f);
+        p.pos = track.pointAt(d) + rr * (k % 2 == 0 ? 3.5f : -3.5f);
+        p.type = k;
         pickups.push_back(p);
     }
 }
@@ -153,12 +168,16 @@ static void stepCar(Race& r, Car& c, const CarSpec& sp, const CarInput& in) {
     }
     bool boosting = c.boostLeft > 0.f;
     if (boosting) c.boostLeft -= STEP;
+    if (c.shieldT > 0.f) c.shieldT -= STEP;
+    bool slowed = c.slowT > 0.f;
+    if (slowed) c.slowT -= STEP;
 
     Vec2 fwd = {std::cos(c.heading), std::sin(c.heading)};
     float speed = dot(c.vel, fwd);
 
     float maxSp = sp.maxSpeed + (boosting ? sp.boostAccel * 1.2f : 0.f);
     float acc = throttle * (sp.accel + (boosting ? sp.boostAccel : 0.f));
+    if (slowed) { maxSp *= 0.55f; acc *= 0.35f; } // weapon slowdown
     if (speed < maxSp) c.vel = c.vel + fwd * (acc * STEP);
     // brake / reverse
     if (brake > 0.f) {
@@ -227,6 +246,8 @@ static void stepCar(Race& r, Car& c, const CarSpec& sp, const CarInput& in) {
     if (!c.finished) c.raceTime = r.time();
 }
 
+static void stepCombat(Race& r, const std::vector<CarInput>& inputs);
+
 void Race::step(const std::vector<CarInput>& inputs) {
     tick++;
     if (countdown > 0.f) countdown -= STEP;
@@ -255,7 +276,8 @@ void Race::step(const std::vector<CarInput>& inputs) {
                 }
             }
         }
-    // pickups
+    stepCombat(*this, inputs);
+    // pickups: grant the held weapon (replaces any held one)
     for (auto& p : pickups) {
         if (!p.active) {
             p.respawn -= STEP;
@@ -263,13 +285,171 @@ void Race::step(const std::vector<CarInput>& inputs) {
             continue;
         }
         for (auto& c : cars) {
-            if (len(c.pos - p.pos) < 2.2f) {
-                c.boostCharges = 1;
+            if (!c.finished && len(c.pos - p.pos) < 2.2f) {
+                c.heldPickup = p.type;
                 p.active = false;
-                p.respawn = 10.f;
+                p.respawn = 12.f;
                 break;
             }
         }
+    }
+}
+
+// One weapon hit landing on a car: shield absorbs it, otherwise damage + slow,
+// and a knock-out spin when health runs out (no destruction, car recovers).
+static void applyHit(Race& r, Car& c, const CarSpec& sp, float dmg, float slowSec) {
+    if (c.shieldT > 0.f) { c.shieldT = 0.f; return; }
+    c.health = fmaxf(0.f, c.health - dmg);
+    c.slowT = fmaxf(c.slowT, slowSec);
+    if (c.health <= 0.f) {
+        c.health = sp.durability * 0.5f;
+        c.slowT = fmaxf(c.slowT, 2.5f);
+        c.vel = c.vel * 0.25f;
+    }
+    (void)r;
+}
+
+// Fire the held pickup and run all live projectiles/mines/orbs.
+static void stepCombat(Race& r, const std::vector<CarInput>& inputs) {
+    bool frozen = r.countdown > 0.f;
+    for (size_t i = 0; i < r.cars.size(); i++) {
+        Car& c = r.cars[i];
+        if (c.finished || c.heldPickup < 0) continue;
+        bool fire = i < inputs.size() && inputs[i].fire;
+        if (!fire || frozen) continue;
+        int type = c.heldPickup;
+        c.heldPickup = -1;
+        Vec2 fwd{std::cos(c.heading), std::sin(c.heading)};
+        switch (type) {
+            case PK_NITRO:
+                c.boostCharges++;
+                if (c.boostLeft <= 0.f) { c.boostCharges--; c.boostLeft = r.specs[i].boostTime; }
+                break;
+            case PK_BOLT: {
+                int target = -1; float best = 140.f;
+                for (size_t j = 0; j < r.cars.size(); j++) {
+                    if (j == i || r.cars[j].finished) continue;
+                    float dProg = r.cars[j].progress - c.progress;
+                    if (dProg > 0.f && dProg < best) { best = dProg; target = (int)j; }
+                }
+                Projectile s;
+                s.pos = c.pos + fwd * 2.5f;
+                s.vel = fwd * 58.f;
+                s.target = target; s.owner = (int)i; s.type = PK_BOLT; s.ttl = 4.f;
+                r.shots.push_back(s);
+                break;
+            }
+            case PK_SHUNT: {
+                Projectile s;
+                s.pos = c.pos + fwd * 2.5f;
+                s.vel = fwd * 72.f;
+                s.target = -1; s.owner = (int)i; s.type = PK_SHUNT; s.ttl = 1.6f;
+                r.shots.push_back(s);
+                break;
+            }
+            case PK_MINE: {
+                Mine m; m.pos = c.pos - fwd * 3.5f; m.owner = (int)i;
+                r.mines.push_back(m);
+                break;
+            }
+            case PK_SHIELD:
+                c.shieldT = 6.f;
+                break;
+            case PK_SHOCK:
+                for (int k = 1; k <= 3; k++) {
+                    ShockOrb o; o.pos = r.track.pointAt(c.sHint + 25.f * k + 15.f);
+                    r.orbs.push_back(o);
+                }
+                break;
+            case PK_BARGE:
+                for (size_t j = 0; j < r.cars.size(); j++) {
+                    if (j == i || r.cars[j].finished) continue;
+                    Vec2 d = r.cars[j].pos - c.pos;
+                    float dist = len(d);
+                    if (dist < 12.f && dist > 1e-4f) {
+                        r.cars[j].vel = r.cars[j].vel + d * (16.f / dist);
+                        applyHit(r, r.cars[j], r.specs[j], 8.f, 0.5f);
+                    }
+                }
+                break;
+            case PK_REPAIR:
+                c.health = fminf(r.specs[i].durability, c.health + 40.f);
+                break;
+        }
+    }
+    // projectiles
+    for (size_t i = 0; i < r.shots.size();) {
+        Projectile& s = r.shots[i];
+        s.ttl -= STEP;
+        bool dead = s.ttl <= 0.f;
+        if (!dead && s.target >= 0 && s.target < (int)r.cars.size() && !r.cars[s.target].finished) {
+            Vec2 to = r.cars[s.target].pos - s.pos;
+            float d = len(to);
+            if (d > 1e-4f) {
+                Vec2 want = to * (58.f / d);
+                float a = fminf(1.f, 3.5f * STEP);
+                s.vel = s.vel + (want - s.vel) * a;
+            }
+        }
+        s.pos = s.pos + s.vel * STEP;
+        if (!dead) {
+            for (size_t j = 0; j < r.cars.size(); j++) {
+                if ((int)j == s.owner || r.cars[j].finished) continue;
+                if (len(r.cars[j].pos - s.pos) < r.specs[j].radius + 0.9f) {
+                    if (s.type == PK_BOLT) {
+                        applyHit(r, r.cars[j], r.specs[j], 25.f, 0.9f);
+                        if (r.cars[j].shieldT <= 0.f) r.cars[j].vel = r.cars[j].vel * 0.7f;
+                    } else {
+                        float sp2 = len(s.vel);
+                        Vec2 dir = sp2 > 1e-4f ? s.vel * (1.f / sp2) : Vec2{1, 0};
+                        applyHit(r, r.cars[j], r.specs[j], 20.f, 0.7f);
+                        if (r.cars[j].shieldT <= 0.f) r.cars[j].vel = r.cars[j].vel + dir * 8.f;
+                    }
+                    dead = true;
+                    break;
+                }
+            }
+        }
+        if (dead) r.shots.erase(r.shots.begin() + i);
+        else i++;
+    }
+    // mines
+    for (size_t i = 0; i < r.mines.size();) {
+        Mine& m = r.mines[i];
+        m.ttl -= STEP;
+        if (m.arm > 0.f) m.arm -= STEP;
+        bool dead = m.ttl <= 0.f;
+        if (!dead && m.arm <= 0.f) {
+            for (size_t j = 0; j < r.cars.size(); j++) {
+                if ((int)j == m.owner || r.cars[j].finished) continue;
+                if (len(r.cars[j].pos - m.pos) < 2.2f) {
+                    applyHit(r, r.cars[j], r.specs[j], 30.f, 1.5f);
+                    if (r.cars[j].shieldT <= 0.f) r.cars[j].vel = r.cars[j].vel * 0.4f;
+                    dead = true;
+                    break;
+                }
+            }
+        }
+        if (dead) r.mines.erase(r.mines.begin() + i);
+        else i++;
+    }
+    // shock orbs
+    for (size_t i = 0; i < r.orbs.size();) {
+        ShockOrb& o = r.orbs[i];
+        o.ttl -= STEP;
+        bool dead = o.ttl <= 0.f;
+        if (!dead) {
+            for (size_t j = 0; j < r.cars.size(); j++) {
+                if (r.cars[j].finished) continue;
+                if (len(r.cars[j].pos - o.pos) < 3.2f) {
+                    applyHit(r, r.cars[j], r.specs[j], 5.f, 1.2f);
+                    dead = true;
+                    break;
+                }
+            }
+        }
+        if (dead) r.orbs.erase(r.orbs.begin() + i);
+        else i++;
     }
 }
 
@@ -298,6 +478,45 @@ CarInput aiDrive(const Race& race, int i) {
     if ((race.rand() & tune.wobbleMask) == 0) in.steer = clampf(in.steer + ((int)(race.rand() % 21) - 10) * 0.02f * tune.wobbleMag * 10.f, -1.f, 1.f);
     // use boost on straights
     if (tune.usesBoost && c.boostCharges > 0 && curve < 0.05f && speed > sp.maxSpeed * 0.7f) in.boost = true;
+    // weapons: same rules as humans, decision cadence set by difficulty
+    if (c.heldPickup >= 0 && (race.rand() & tune.fireMask) == 0) {
+        switch (c.heldPickup) {
+            case PK_NITRO:
+                if (curve < 0.05f) in.fire = true;
+                break;
+            case PK_BOLT:
+            case PK_SHUNT: {
+                for (size_t j = 0; j < race.cars.size(); j++) {
+                    if (j == (size_t)i || race.cars[j].finished) continue;
+                    Vec2 to = race.cars[j].pos - c.pos;
+                    float dist = len(to);
+                    if (dist > 6.f && dist < 85.f) {
+                        float ang2 = std::fabs(wrapAngle(std::atan2(to.y, to.x) - c.heading));
+                        if (ang2 < 0.5f) { in.fire = true; break; }
+                    }
+                }
+                break;
+            }
+            case PK_MINE:
+                for (size_t j = 0; j < race.cars.size(); j++)
+                    if (j != (size_t)i && race.cars[j].progress < c.progress && c.progress - race.cars[j].progress < 15.f)
+                        in.fire = true;
+                break;
+            case PK_SHIELD:
+                if (c.health < sp.durability * 0.5f || !race.shots.empty()) in.fire = true;
+                break;
+            case PK_SHOCK:
+                if (curve < 0.08f) in.fire = true;
+                break;
+            case PK_BARGE:
+                for (size_t j = 0; j < race.cars.size(); j++)
+                    if (j != (size_t)i && len(race.cars[j].pos - c.pos) < 9.f) in.fire = true;
+                break;
+            case PK_REPAIR:
+                if (c.health < sp.durability * 0.65f) in.fire = true;
+                break;
+        }
+    }
     return in;
 }
 
@@ -321,6 +540,7 @@ bool saveSettings(const Settings& s, const std::string& path) {
       << "\nkeyRight " << s.keyRight << "\nkeyAccelAlt " << s.keyAccelAlt << "\nkeyBrakeAlt " << s.keyBrakeAlt
       << "\nkeyLeftAlt " << s.keyLeftAlt << "\nkeyRightAlt " << s.keyRightAlt
       << "\nkeyHandbrake " << s.keyHandbrake << "\nkeyBoost " << s.keyBoost << "\nkeyPause " << s.keyPause
+      << "\nkeyFire " << s.keyFire << "\nkeyFireAlt " << s.keyFireAlt
       << "\npadDeadzone " << s.padDeadzone << "\npadSteerSens " << s.padSteerSens
       << "\naiDifficulty " << s.aiDifficulty << "\nlaps " << s.laps
       << "\ncredits " << s.credits << "\nracesCompleted " << s.racesCompleted << "\nwins " << s.wins << "\nunlocked " << s.unlocked
@@ -364,6 +584,8 @@ Settings loadSettings(const std::string& path) {
             else if (key == "keyHandbrake") tmp.keyHandbrake = std::stoi(val);
             else if (key == "keyBoost") tmp.keyBoost = std::stoi(val);
             else if (key == "keyPause") tmp.keyPause = std::stoi(val);
+            else if (key == "keyFire") tmp.keyFire = std::stoi(val);
+            else if (key == "keyFireAlt") tmp.keyFireAlt = std::stoi(val);
             else if (key == "padDeadzone") tmp.padDeadzone = std::stof(val);
             else if (key == "padSteerSens") tmp.padSteerSens = std::stof(val);
             else if (key == "credits") tmp.credits = std::stoi(val);
@@ -393,6 +615,7 @@ CarInput mapKeys(const Settings& s, const RawKeys& k) {
     if (k.right) in.steer += 1;
     in.handbrake = k.handbrake;
     in.boost = k.boost;
+    in.fire = k.fire;
     return in;
 }
 
@@ -407,6 +630,7 @@ CarInput mapGamepad(const Settings& s, const RawPad& p) {
     if (p.brake) in.brake = 1;
     in.handbrake = p.handbrake;
     in.boost = p.boost;
+    in.fire = p.fire;
     if (in.steer > 1.f) in.steer = 1.f;
     if (in.steer < -1.f) in.steer = -1.f;
     return in;
@@ -419,6 +643,7 @@ CarInput mergeInputs(CarInput a, CarInput b) {
     if (b.steer != 0.f) in.steer = b.steer;
     in.handbrake = a.handbrake || b.handbrake;
     in.boost = a.boost || b.boost;
+    in.fire = a.fire || b.fire;
     return in;
 }
 

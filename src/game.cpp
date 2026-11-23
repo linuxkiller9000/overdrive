@@ -301,6 +301,31 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     rlPopMatrix();
 }
 
+// One sim step for the full grid: player input at index 0, AI for the rest.
+static void stepRaceAll(sim::Race& race, sim::CarInput playerIn) {
+    std::vector<sim::CarInput> inputs(race.cars.size());
+    inputs[0] = playerIn;
+    for (size_t i = 1; i < race.cars.size(); i++) inputs[i] = sim::aiDrive(race, (int)i);
+    race.step(inputs);
+}
+
+static const Color kCarCols[8] = {{230, 230, 240, 255}, {255, 45, 130, 255}, {0, 200, 190, 255}, {255, 190, 60, 255},
+                                  {170, 90, 255, 255}, {255, 120, 40, 255}, {90, 220, 120, 255}, {70, 130, 255, 255}};
+
+static Color pickupColor(int type) {
+    switch (type) {
+        case sim::PK_NITRO: return {255, 200, 40, 255};
+        case sim::PK_BOLT: return {255, 45, 130, 255};
+        case sim::PK_SHUNT: return {255, 120, 30, 255};
+        case sim::PK_MINE: return {200, 50, 50, 255};
+        case sim::PK_SHIELD: return {60, 160, 255, 255};
+        case sim::PK_SHOCK: return {120, 240, 255, 255};
+        case sim::PK_BARGE: return {180, 80, 255, 255};
+        case sim::PK_REPAIR: return {80, 230, 120, 255};
+        default: return WHITE;
+    }
+}
+
 sim::CarInput readInput(const sim::Settings& s) {
     sim::RawKeys k{};
     k.accel = IsKeyDown(s.keyAccel) || IsKeyDown(s.keyAccelAlt);
@@ -309,6 +334,7 @@ sim::CarInput readInput(const sim::Settings& s) {
     k.right = IsKeyDown(s.keyRight) || IsKeyDown(s.keyRightAlt);
     k.handbrake = IsKeyDown(s.keyHandbrake);
     k.boost = IsKeyPressed(s.keyBoost);
+    k.fire = IsKeyPressed(s.keyFire) || IsKeyPressed(s.keyFireAlt);
     sim::RawPad p{};
     if (IsGamepadAvailable(0)) {
         p.steerAxis = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
@@ -319,6 +345,7 @@ sim::CarInput readInput(const sim::Settings& s) {
         p.brake = IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_LEFT);
         p.handbrake = IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_UP);
         p.boost = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT);
+        p.fire = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_TRIGGER_1);
     }
     return sim::mergeInputs(sim::mapKeys(s, k), sim::mapGamepad(s, p));
 }
@@ -338,7 +365,7 @@ void drawHud(const sim::Race& r, const GameApp& app, int W, int H) {
     int place = p.finished ? p.finishPlace : 1;
     if (!p.finished)
         for (size_t i = 1; i < r.cars.size(); i++) if (r.cars[i].progress > p.progress) place++;
-    DrawText(place == 1 ? "1st" : (place == 2 ? "2nd" : "3rd"), W - 90, 20, 28, place == 1 ? GOLD : WHITE);
+    DrawText(place == 1 ? "1st" : (place == 2 ? "2nd" : (place == 3 ? "3rd" : TextFormat("%dth", place))), W - 90, 20, 28, place == 1 ? GOLD : WHITE);
     float t = p.finished ? p.raceTime : r.time() - 3.2f;
     if (t < 0) t = 0;
     DrawText(TextFormat("%d:%05.2f", (int)(t / 60), std::fmod(t, 60.f)), W / 2 - 60, 20, 28, WHITE);
@@ -347,6 +374,20 @@ void drawHud(const sim::Race& r, const GameApp& app, int W, int H) {
         DrawRectangleLines(W / 2 - 60, H - 70, 120, 34, {255, 200, 40, 255});
         DrawText("TURBO", W / 2 - 44, H - 63, 20, {255, 200, 40, 255});
     }
+    // held weapon + health, top-left under the lap counter
+    if (p.heldPickup >= 0) {
+        Color pc = pickupColor(p.heldPickup);
+        DrawRectangle(16, 56, 170, 34, {0, 0, 0, 120});
+        DrawRectangleLines(16, 56, 170, 34, pc);
+        DrawText(sim::pickupName(p.heldPickup), 28, 64, 20, pc);
+        DrawText("E", 162, 64, 20, WHITE);
+    }
+    {
+        float hpFrac = r.specs.empty() ? 1.f : p.health / r.specs[0].durability;
+        DrawRectangle(16, 96, 170, 10, {0, 0, 0, 120});
+        DrawRectangle(16, 96, (int)(170 * hpFrac), 10, hpFrac > 0.5f ? Color{80, 230, 120, 255} : (hpFrac > 0.25f ? Color{255, 200, 40, 255} : Color{255, 60, 60, 255}));
+    }
+    if (p.shieldT > 0.f) drawTextOutline("SHIELD", 20, 116, 18, {60, 160, 255, 255});
     if (p.boostLeft > 0.f)
         drawTextOutline("BOOST!", W / 2 - 50, H - 110, 28, {255, 200, 40, 255});
     if (p.wrongWay) drawTextOutline("WRONG WAY", W / 2 - 110, H / 2 - 40, 34, RED);
@@ -356,7 +397,8 @@ void drawHud(const sim::Race& r, const GameApp& app, int W, int H) {
     }
     if (p.finished) {
         DrawRectangle(0, 0, W, H, {0, 0, 0, 160});
-        drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace, p.finishPlace == 2 ? "nd" : "rd"),
+        drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace,
+                        p.finishPlace == 2 ? "nd" : (p.finishPlace == 3 ? "rd" : "th")),
                         W / 2 - 140, H / 3, 44, GOLD);
         drawTextOutline("Press ESC", W / 2 - 60, H / 3 + 60, 20, LIGHTGRAY);
     }
@@ -374,7 +416,8 @@ void drawHud(const sim::Race& r, const GameApp& app, int W, int H) {
     }
     for (size_t i = 0; i < r.cars.size(); i++) {
         Vector2 a = proj(r.cars[i].pos);
-        DrawCircleV(a, 4, i == 0 ? GOLD : (i == 1 ? Color{255, 45, 130, 255} : Color{0, 229, 220, 255}));
+        Color dc = kCarCols[i % 8];
+        DrawCircleV(a, i == 0 ? 4.5f : 3.5f, i == 0 ? GOLD : dc);
     }
     if (app.showFps) DrawText(TextFormat("%d FPS", GetFPS()), 20, H - 30, 20, LIME);
 }
@@ -416,14 +459,17 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), {14, 10, 42, 255}, {64, 18, 60, 255});
     BeginMode3D(cam);
     if (coastal) {
-        // sand under everything, ocean plane beyond the bounds on the +x side
-        float R = tm.boundsRadius + 80.f;
+        // sand fills the whole scene; ocean sits fully beyond the sand's +x edge
+        float R = tm.boundsRadius + 400.f;
         DrawPlane({tm.boundsCenter.x, -0.2f, tm.boundsCenter.z}, {R * 2.f, R * 2.f}, {214, 190, 140, 255});
-        float ox = tm.boundsCenter.x + tm.boundsRadius + 320.f;
-        DrawPlane({ox, -0.3f, tm.boundsCenter.z}, {560.f, (tm.boundsRadius + 400.f) * 2.f}, {20, 90, 140, 255});
+        float sandEdge = tm.boundsCenter.x + R;
+        float ox = sandEdge + 300.f;
+        DrawPlane({ox, -0.3f, tm.boundsCenter.z}, {600.f, R * 2.f}, {20, 90, 140, 255});
         // animated foam line where the sand meets the water
         float foam = 0.5f + 0.5f * std::sin(GetTime() * 1.5);
-        DrawPlane({ox - 278.f, -0.25f, tm.boundsCenter.z}, {3.f + foam * 2.f, (tm.boundsRadius + 380.f) * 2.f}, {220, 235, 240, 255});
+        DrawPlane({sandEdge + 2.f, -0.25f, tm.boundsCenter.z}, {3.f + foam * 2.f, R * 2.f}, {220, 235, 240, 255});
+        // sun glow low over the ocean
+        DrawSphere({ox + 200.f, 60.f, tm.boundsCenter.z}, 30.f, Fade({255, 220, 150, 255}, 0.8f));
     }
     DrawPlane({0, -0.05f, 0}, {1600, 1600}, {16, 16, 28, 255});
     DrawModel(tm.road, {0, 0, 0}, 1.f, WHITE);
@@ -538,7 +584,13 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     }
     for (size_t k = 1; k < r.track.checkpoints.size(); k++) {
         sim::Vec2 cp = r.track.pointAt(r.track.cum[r.track.checkpoints[k]]);
-        DrawCubeV({cp.x, 3.f, cp.y}, {0.6f, 6.f, 0.6f}, {60, 60, 90, 255});
+        sim::Vec2 cd = r.track.dirAt(r.track.cum[r.track.checkpoints[k]]);
+        sim::Vec2 cn{-cd.y, cd.x};
+        Color cc = coastal ? Color{240, 240, 245, 255} : Color{60, 60, 90, 255};
+        // posts on both edges and a floating chevron: driving line stays clear
+        DrawCubeV({cp.x + cn.x * (r.track.halfWidth + 0.9f), 3.f, cp.y + cn.y * (r.track.halfWidth + 0.9f)}, {0.5f, 6.f, 0.5f}, cc);
+        DrawCubeV({cp.x - cn.x * (r.track.halfWidth + 0.9f), 3.f, cp.y - cn.y * (r.track.halfWidth + 0.9f)}, {0.5f, 6.f, 0.5f}, cc);
+        DrawCubeV({cp.x, 5.5f, cp.y}, {1.6f, 0.5f, 1.6f}, coastal ? Color{255, 190, 60, 255} : Color{0, 229, 220, 255});
     }
     sim::Vec2 st = r.track.pointAt(0);
     sim::Vec2 sd = r.track.dirAt(0);
@@ -556,16 +608,37 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     for (auto& pk : r.pickups)
         if (pk.active) {
             float pulse = 0.8f + 0.2f * std::sin(GetTime() * 6.0);
-            DrawCubeV({pk.pos.x, 1.f, pk.pos.y}, {pulse, pulse, pulse}, {255, 200, 40, 255});
+            Color pc = pickupColor(pk.type);
+            DrawCubeV({pk.pos.x, 1.f, pk.pos.y}, {pulse, pulse, pulse}, pc);
+            DrawSphere({pk.pos.x, 2.2f + 0.3f * std::sin(GetTime() * 3.0), pk.pos.y}, 0.35f, pc);
         }
-    Color cols[3] = {{230, 230, 240, 255}, {255, 45, 130, 255}, {0, 200, 190, 255}};
+    // combat: projectiles, mines, shock orbs, shields
+    for (auto& s : r.shots) {
+        Color sc = s.type == sim::PK_BOLT ? Color{255, 60, 140, 255} : Color{255, 140, 40, 255};
+        DrawSphere({s.pos.x, 1.f, s.pos.y}, 0.55f, sc);
+        DrawSphere({s.pos.x, 1.f, s.pos.y}, 0.9f, Fade(sc, 0.25f));
+    }
+    for (auto& m : r.mines) {
+        DrawCylinder({m.pos.x, 0.15f, m.pos.y}, 1.0f, 1.2f, 0.3f, 10, {40, 40, 48, 255});
+        float blink = m.arm > 0.f ? 0.3f : (0.5f + 0.5f * std::sin(GetTime() * 8.0));
+        DrawSphere({m.pos.x, 0.45f, m.pos.y}, 0.25f, Fade({255, 60, 60, 255}, blink));
+    }
+    for (auto& o : r.orbs) {
+        float pulse = 0.9f + 0.25f * std::sin(GetTime() * 9.0);
+        DrawSphere({o.pos.x, 1.1f, o.pos.y}, 1.3f * pulse, Fade({120, 240, 255, 255}, 0.35f));
+        DrawSphere({o.pos.x, 1.1f, o.pos.y}, 0.5f, {200, 250, 255, 255});
+    }
+    for (size_t i = 0; i < r.cars.size(); i++)
+        if (r.cars[i].shieldT > 0.f)
+            DrawSphere({r.cars[i].pos.x, 1.1f, r.cars[i].pos.y}, 2.6f, Fade({60, 160, 255, 255}, 0.2f));
+    const Color* cols = kCarCols;
     // rivals sitting on the camera->player sight line fade out instead of hiding the player
     const sim::Car& pc = r.cars[0];
     sim::Vec2 camPos{cam.position.x, cam.position.z};
     sim::Vec2 seg = pc.pos - camPos;
     float segLen2 = fmaxf(sim::dot(seg, seg), 1e-3f);
     for (size_t i = 0; i < r.cars.size(); i++) {
-        Color col = cols[i % 3];
+        Color col = cols[i % 8];
         if (i > 0) {
             sim::Vec2 rel = r.cars[i].pos - camPos;
             float along = sim::dot(rel, seg) / segLen2;
@@ -739,7 +812,8 @@ static void drawResults(const GameApp& app, const sim::Race& race) {
     const sim::Car& p = race.cars[0];
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
-    drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace, p.finishPlace == 2 ? "nd" : "rd"),
+    drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace,
+                    p.finishPlace == 2 ? "nd" : (p.finishPlace == 3 ? "rd" : "th")),
                     GetScreenWidth() / 2 - 160, 90, 48, GOLD);
     drawTextOutline(TextFormat("RACE TIME  %d:%05.2f", (int)(p.raceTime / 60), std::fmod(p.raceTime, 60.f)),
                     GetScreenWidth() / 2 - 170, 200, 28, WHITE);
@@ -794,7 +868,7 @@ int runGame(GameApp& app) {
                 acc += GetFrameTime();
                 sim::CarInput in = race.countdown > 0.f ? sim::CarInput{} : readInput(app.settings);
                 while (acc >= sim::STEP) {
-                    race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+                    stepRaceAll(race, in);
                     updateChaseCam(cam, cc, race, sim::STEP);
                     acc -= sim::STEP;
                 }
@@ -827,7 +901,7 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
     TrackMeshes tm = buildTrack(race.track, app.settings.quality, sim::trackDefs()[race.trackIndex].theme);
     ChaseCam cc;
     int taken = 0;
-    bool gotCorner = false, gotBoost = false, gotPause = false, gotFinish = false;
+    bool gotCorner = false, gotBoost = false, gotPause = false, gotFinish = false, gotCombat = false;
     auto snap = [&](const char* tag) {
         char name[256];
         std::snprintf(name, sizeof(name), "%s-%02d-%s.png", prefix.c_str(), taken, tag);
@@ -846,13 +920,18 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
         pad.handbrake = aiIn.handbrake;
         pad.boost = aiIn.boost;
         sim::CarInput in = sim::mapGamepad(app.settings, pad);
-        race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+        // fire a held offensive weapon once so combat is on camera
+        if (!gotCombat && race.time() > 20.f && (race.cars[0].heldPickup == sim::PK_BOLT || race.cars[0].heldPickup == sim::PK_SHUNT))
+            in.fire = true;
+        stepRaceAll(race, in);
         updateChaseCam(cam, cc, race, sim::STEP);
         float t = race.time();
         // grant one boost charge mid-race so activation is guaranteed on camera
         if (!gotBoost && race.cars[0].lap >= 1 && race.cars[0].boostCharges == 0 && t > 30.f && race.cars[0].boostLeft <= 0)
             race.cars[0].boostCharges = 1;
+
         if (f % 3 == 0) drawFrame(race, tm, cam, app, 0); // draw often enough that the chase camera tracks
+        if (!gotCombat && !race.shots.empty() && f % 3 == 0) { snap("combat"); gotCombat = true; }
         if (t >= 5.f && taken == 0) { snap("grid-straight"); }
         else if (!gotCorner && race.cars[0].sHint > race.track.total * 0.35f && race.cars[0].sHint < race.track.total * 0.55f) {
             snap("corner"); gotCorner = true;
@@ -903,7 +982,7 @@ int runUITest(GameApp& app) {
         pad.boost = aiIn.boost;
         sim::CarInput in = sim::mergeInputs(hw, sim::mapGamepad(app.settings, pad));
         while (acc >= sim::STEP) {
-            race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+            stepRaceAll(race, in);
             updateChaseCam(cam, cc, race, sim::STEP);
             acc -= sim::STEP;
         }
@@ -937,7 +1016,7 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
     for (int f = 0; f < 60 * 400 && !race.cars[0].finished; f++) {
         sim::CarInput aiIn = sim::aiDrive(race, 0);
         if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) aiIn.boost = true;
-        race.step({aiIn, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+        stepRaceAll(race, aiIn);
     }
     sim::updateRecords(app.settings, race.cars[0], race.trackIndex); // same win-only rules as the real results path
     drawResults(app, race);
