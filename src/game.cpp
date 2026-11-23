@@ -537,7 +537,7 @@ static void drawGarage(GameApp& app, int selected, float rotation) {
     EndMode3D();
     int x=W-365,y=130;
     DrawRectangle(x-22,y-20,360,430,{7,13,23,240});
-    const char* labels[]={"ACCELERATION","TOP SPEED","STEERING","GRIP","DRIFT SLIDE","BRAKING","DURABILITY","BOOST"};
+    const char* labels[]={"ACCELERATION","TOP SPEED","STEERING","GRIP","SLIDE TENDENCY","BRAKING","DURABILITY","BOOST POWER"};
     float values[]={v.accel/20.f,v.maxSpeed/50.f,v.steerRate/3.5f,v.grip/13.f,1.f-v.driftGrip/4.f,v.brake/30.f,v.durability/180.f,v.boostAccel/20.f};
     const auto& current=roster[app.settings.playerVehicle];
     float comp[]={current.accel/20.f,current.maxSpeed/50.f,current.steerRate/3.5f,current.grip/13.f,1.f-current.driftGrip/4.f,current.brake/30.f,current.durability/180.f,current.boostAccel/20.f};
@@ -547,10 +547,11 @@ static void drawGarage(GameApp& app, int selected, float rotation) {
         DrawRectangle(x,y+22+i*48,(int)(260*values[i]),8,{0,210,210,255});
         DrawRectangle(x+(int)(260*comp[i]),y+18+i*48,2,16,GOLD);
     }
-    DrawText("Gold marker: equipped vehicle",x,y+390,14,GOLD);
+    DrawText(TextFormat("Gold: %s equipped",current.name.c_str()),x,y+390,14,GOLD);
     DrawText(TextFormat("%.0f km/h  |  %.0f HP  |  %.1fs boost",v.maxSpeed*3.6f,v.durability,v.boostTime),44,H-150,20,{150,170,190,255});
     DrawText(owned?(selected==app.settings.playerVehicle?"EQUIPPED":"ENTER / A: EQUIP"):TextFormat("ENTER / A: UNLOCK  %d CR",sim::vehicleUnlockCost(selected)),44,H-106,24,owned?WHITE:GOLD);
     DrawText("LEFT / RIGHT: browse    ESC / B: back",44,H-58,20,{150,170,190,255});
+    DrawText("Bars: higher = stronger; SLIDE higher = slides more",44,H-84,14,{120,140,160,255});
     EndDrawing();
 }
 static void garageMenu(GameApp& app) {

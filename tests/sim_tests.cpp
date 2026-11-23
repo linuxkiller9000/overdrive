@@ -178,7 +178,53 @@ int runTests() {
         CHECK(loaded.unlocked==15 && loaded.wins==1 && loaded.racesCompleted==2,"garage progress reloads");
         CHECK(loaded.aiDifficulty==2 && loaded.laps==5,"difficulty and laps persist");
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (12 groups)\n");
+    // Controlled behavior comparisons: tuning differences must change outcomes.
+    {
+        auto accelTo20=[&](int v){ sim::Race r; r.init(1,1,v); r.countdown=0;
+            sim::CarInput in{}; in.throttle=1; int t=0;
+            for(;t<60*10;t++){ r.step({in,{},{}}); if(sim::len(r.cars[0].vel)>=20.f) break; }
+            return t; };
+        CHECK(accelTo20(1) < accelTo20(2), "SPRINTER out-accelerates HAULER to 20 m/s");
+        auto stopDist=[&](int v){ sim::Race r; r.init(1,1,v); r.countdown=0;
+            sim::Vec2 f{std::cos(r.cars[0].heading),std::sin(r.cars[0].heading)};
+            r.cars[0].vel=f*30.f; // same entry speed for every car
+            sim::CarInput in{}; in.throttle=0; in.brake=1;
+            sim::Vec2 from=r.cars[0].pos;
+            for(int i=0;i<60*6 && sim::len(r.cars[0].vel)>0.1f;i++) r.step({in,{},{}});
+            return sim::len(r.cars[0].pos-from); };
+        CHECK(stopDist(5) < stopDist(2), "VOLT out-brakes HAULER");
+        auto topSpeed=[&](int v){ sim::Race r; r.init(1,1,v); r.countdown=0;
+            sim::CarInput in{}; in.throttle=1; float peak=0;
+            for(int i=0;i<60*12;i++){ r.step({in,{},{}}); peak=fmaxf(peak,sim::len(r.cars[0].vel)); }
+            return peak; };
+        CHECK(topSpeed(3) > topSpeed(5) + 2.f, "AFTERBURN has higher top speed than VOLT");
+        auto turnRate=[&](int v){ sim::Race r; r.init(1,1,v); r.countdown=0;
+            sim::CarInput in{}; in.throttle=1;
+            for(int i=0;i<120;i++) r.step({in,{},{}});
+            float h0=r.cars[0].heading; in.steer=1;
+            for(int i=0;i<60;i++) r.step({in,{},{}});
+            return std::fabs(r.cars[0].heading-h0); };
+        CHECK(turnRate(4) > turnRate(2) + 0.1f, "SIDEWINDER out-turns HAULER");
+        auto driftSlip=[&](int v){ sim::Race r; r.init(1,1,v); r.countdown=0;
+            sim::CarInput in{}; in.throttle=1;
+            for(int i=0;i<120;i++) r.step({in,{},{}});
+            in.steer=1; in.handbrake=true; float peak=0;
+            for(int i=0;i<45;i++){ r.step({in,{},{}});
+                sim::Vec2 f{std::cos(r.cars[0].heading),std::sin(r.cars[0].heading)};
+                sim::Vec2 rg{-f.y,f.x}; peak=fmaxf(peak,std::fabs(sim::dot(r.cars[0].vel,rg))); }
+            return peak; };
+        CHECK(driftSlip(4) > driftSlip(6) + 0.5f, "SIDEWINDER slides more than RIDGEBACK");
+        auto boostGain=[&](int v){ sim::Race r; r.init(1,1,v); r.countdown=0;
+            sim::CarInput in{}; in.throttle=1;
+            for(int i=0;i<120;i++) r.step({in,{},{}});
+            float base=0; { float sp=sim::len(r.cars[0].vel);
+                for(int i=0;i<60;i++){ r.step({in,{},{}}); base=fmaxf(base,sim::len(r.cars[0].vel)-sp); } }
+            r.cars[0].boostCharges=1; in.boost=true; float boosted=0; { float sp=sim::len(r.cars[0].vel);
+                for(int i=0;i<60;i++){ r.step({in,{},{}}); boosted=fmaxf(boosted,sim::len(r.cars[0].vel)-sp); } }
+            return boosted-base; };
+        CHECK(boostGain(7) > boostGain(6) + 0.5f, "PHANTOM boost out-accelerates RIDGEBACK boost");
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (13 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }
