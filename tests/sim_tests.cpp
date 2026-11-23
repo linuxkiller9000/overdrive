@@ -224,7 +224,54 @@ int runTests() {
             return boosted-base; };
         CHECK(boostGain(7) > boostGain(6) + 0.5f, "PHANTOM boost out-accelerates RIDGEBACK boost");
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (13 groups)\n");
+    // group 14: second track + per-track records
+    {
+        CHECK((int)sim::trackDefs().size() == 2, "two track defs");
+        for (int ti = 0; ti < 2; ti++) {
+            sim::Race rt; rt.init(1, 1, 0, ti);
+            CHECK(rt.track.total > 500.f, "track length sane");
+            sim::Vec2 a = rt.track.pointAt(0), b = rt.track.pointAt(rt.track.total);
+            CHECK(sim::len(a - b) < 0.5f, "loop closes");
+            CHECK((int)rt.track.checkpoints.size() == 8, "8 checkpoints");
+            CHECK(rt.trackIndex == ti, "track index stored");
+        }
+        {   // AI completes a full race on the coastal track
+            sim::Race rc; rc.init(2, 1, 0, 1);
+            bool finished = false;
+            for (int i = 0; i < 60 * 240 && !finished; i++) {
+                rc.step({sim::aiDrive(rc, 0), sim::aiDrive(rc, 1), sim::aiDrive(rc, 2)});
+                finished = rc.cars[0].finished;
+            }
+            CHECK(finished, "AI completes coastal race distance");
+            CHECK(rc.cars[0].lap >= 2, "coastal laps counted");
+        }
+        {   // per-track record isolation
+            sim::Settings s;
+            sim::Car p; p.bestLap = 50.f; p.finishPlace = 1; p.raceTime = 160.f;
+            sim::updateRecords(s, p, 0);
+            CHECK(s.bestLapMsT[0] == 50000 && s.bestLapMsT[1] == -1, "lap record per track");
+            CHECK(s.bestRaceMsT[0] == 160000 && s.bestRaceMsT[1] == -1, "win record per track");
+            p.bestLap = 60.f; p.finishPlace = 2; p.raceTime = 200.f;
+            sim::updateRecords(s, p, 1);
+            CHECK(s.bestLapMsT[1] == 60000, "track 1 lap recorded");
+            CHECK(s.bestRaceMsT[1] == -1, "non-win does not set race record");
+            p.bestLap = 40.f;
+            sim::updateRecords(s, p, 0);
+            CHECK(s.bestLapMsT[0] == 40000, "faster lap replaces");
+            sim::updateRecords(s, p, 9);
+            CHECK(s.bestLapMsT[2] == -1, "out-of-range track ignored");
+        }
+        {   // settings roundtrip with track fields
+            sim::Settings s; s.trackIndex = 1; s.bestLapMsT[1] = 61234; s.bestRaceMsT[1] = 187000;
+            std::string path = "/tmp/overdrive-test-settings.cfg";
+            sim::saveSettings(s, path);
+            sim::Settings l = sim::loadSettings(path);
+            CHECK(l.trackIndex == 1, "trackIndex roundtrip");
+            CHECK(l.bestLapMsT[1] == 61234 && l.bestRaceMsT[1] == 187000, "per-track records roundtrip");
+            std::remove(path.c_str());
+        }
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (14 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }

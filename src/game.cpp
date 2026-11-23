@@ -11,6 +11,7 @@ namespace {
 
 struct TrackMeshes {
     Model road{}, edgeL{}, edgeR{}, centerLine{}, curbL{}, curbR{}, windows{}, sidewalkL{}, sidewalkR{};
+    int theme = 0;
     std::vector<Vector3> buildings;
     std::vector<Color> buildingColors;
     Vector3 boundsCenter{0, 0, 0};
@@ -103,22 +104,27 @@ done: ;
     return LoadModelFromMesh(m);
 }
 
-TrackMeshes buildTrack(const sim::Track& t, int quality) {
+TrackMeshes buildTrack(const sim::Track& t, int quality, int theme = 0) {
     TrackMeshes tm;
-    Color road1{38, 38, 46, 255}, road2{34, 34, 40, 255};
+    bool coastal = (theme == 1);
+    Color road1 = coastal ? Color{52,54,58,255} : Color{38,38,46,255};
+    Color road2 = coastal ? Color{46,48,52,255} : Color{34,34,40,255};
     tm.road = ribbonMesh(t, -t.halfWidth, t.halfWidth, road1, road2);
-    Color neonA{0, 229, 220, 255}, neonB{255, 45, 130, 255};
+    Color neonA = coastal ? Color{250,250,250,255} : Color{0,229,220,255};
+    Color neonB = coastal ? Color{255,190,60,255} : Color{255,45,130,255};
     tm.edgeL = ribbonMesh(t, t.halfWidth - 0.4f, t.halfWidth, neonA, neonA);
     tm.edgeR = ribbonMesh(t, -t.halfWidth, -t.halfWidth + 0.4f, neonB, neonB);
-    tm.centerLine = ribbonMesh(t, -0.15f, 0.15f, {80, 80, 95, 255}, {80, 80, 95, 255}, true);
-    tm.sidewalkL = ribbonMesh(t, t.halfWidth + 1.5f, t.halfWidth + 10.f, {44, 49, 65, 255}, {40, 44, 59, 255});
-    tm.sidewalkR = ribbonMesh(t, -t.halfWidth - 10.f, -t.halfWidth - 1.5f, {44, 49, 65, 255}, {40, 44, 59, 255});
-    Color curbA{200, 40, 60, 255}, curbB{225, 225, 230, 255};
+    tm.centerLine = ribbonMesh(t, -0.15f, 0.15f, coastal ? Color{210,180,90,255} : Color{80,80,95,255}, coastal ? Color{210,180,90,255} : Color{80,80,95,255}, true);
+    Color walkA = coastal ? Color{196,178,130,255} : Color{44,49,65,255};
+    Color walkB = coastal ? Color{184,166,120,255} : Color{40,44,59,255};
+    tm.sidewalkL = ribbonMesh(t, t.halfWidth + 1.5f, t.halfWidth + 10.f, walkA, walkB);
+    tm.sidewalkR = ribbonMesh(t, -t.halfWidth - 10.f, -t.halfWidth - 1.5f, walkA, walkB);
+    Color curbA = coastal ? Color{235,235,235,255} : Color{200,40,60,255}, curbB = coastal ? Color{60,120,190,255} : Color{225,225,230,255};
     tm.curbL = ribbonMesh(t, t.halfWidth + 0.05f, t.halfWidth + 1.5f, curbA, curbB);
     tm.curbR = ribbonMesh(t, -t.halfWidth - 1.5f, -t.halfWidth - 0.05f, curbA, curbB);
-    // procedural city blocks outside the road
+    // procedural scenery outside the road: city blocks or coastal palms/huts
     tm.buildings.clear();
-    if (quality > 0) {
+    if (quality > 0 && !coastal) {
         unsigned st = 12345;
         auto rnd = [&]() { st ^= st << 13; st ^= st >> 17; st ^= st << 5; return (st & 0xFFFF) / 65535.f; };
         for (int i = 0; i < (int)t.center.size(); i += 3) {
@@ -144,6 +150,30 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
         }
         tm.windows = windowMesh(tm.buildings);
     }
+    if (quality > 0 && coastal) {
+        unsigned st = 4242;
+        auto rnd = [&]() { st ^= st << 13; st ^= st >> 17; st ^= st << 5; return (st & 0xFFFF) / 65535.f; };
+        for (int i = 0; i < (int)t.center.size(); i += 2) {
+            for (int side = -1; side <= 1; side += 2) {
+                if (rnd() < 0.45f) continue;
+                sim::Vec2 c = t.center[i];
+                sim::Vec2 d = t.dirAt(t.cum[i]);
+                sim::Vec2 n{-d.y, d.x};
+                float off = t.halfWidth + 14.f + rnd() * 45.f;
+                float x = c.x + n.x * off * side, z = c.y + n.y * off * side;
+                bool tooClose = false;
+                for (auto& tp : t.center)
+                    if (sim::len(sim::Vec2{x, z} - tp) < t.halfWidth + 10.f) { tooClose = true; break; }
+                for (auto& placed : tm.buildings)
+                    if (sim::len(sim::Vec2{x-placed.x,z-placed.z}) < 12.f) { tooClose = true; break; }
+                if (tooClose) continue;
+                bool palm = rnd() > 0.35f;
+                tm.buildings.push_back({x, palm ? 5.f + rnd() * 3.f : 2.f, z});
+                tm.buildingColors.push_back(palm ? Color{40,120,60,255} : (rnd() > 0.5f ? Color{225,215,190,255} : Color{200,120,90,255}));
+            }
+        }
+    }
+    tm.theme = theme;
     return tm;
 }
 
@@ -377,10 +407,24 @@ static void updateChaseCam(Camera3D& cam, ChaseCam& cc, const sim::Race& r, floa
 static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D& cam, const GameApp& app, float steerVis) {
     const sim::Car& p = r.cars[0];
     sim::Vec2 fwd{std::cos(p.heading), std::sin(p.heading)};
+    bool coastal = (tm.theme == 1);
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
-    DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), {14, 10, 42, 255}, {64, 18, 60, 255});
+    if (coastal)
+        DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), {255, 150, 90, 255}, {90, 50, 110, 255});
+    else
+        DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), {14, 10, 42, 255}, {64, 18, 60, 255});
     BeginMode3D(cam);
+    if (coastal) {
+        // sand under everything, ocean plane beyond the bounds on the +x side
+        float R = tm.boundsRadius + 80.f;
+        DrawPlane({tm.boundsCenter.x, -0.2f, tm.boundsCenter.z}, {R * 2.f, R * 2.f}, {214, 190, 140, 255});
+        float ox = tm.boundsCenter.x + tm.boundsRadius + 320.f;
+        DrawPlane({ox, -0.3f, tm.boundsCenter.z}, {560.f, (tm.boundsRadius + 400.f) * 2.f}, {20, 90, 140, 255});
+        // animated foam line where the sand meets the water
+        float foam = 0.5f + 0.5f * std::sin(GetTime() * 1.5);
+        DrawPlane({ox - 278.f, -0.25f, tm.boundsCenter.z}, {3.f + foam * 2.f, (tm.boundsRadius + 380.f) * 2.f}, {220, 235, 240, 255});
+    }
     DrawPlane({0, -0.05f, 0}, {1600, 1600}, {16, 16, 28, 255});
     DrawModel(tm.road, {0, 0, 0}, 1.f, WHITE);
     DrawModel(tm.edgeL, {0, 0.02f, 0}, 1.f, WHITE);
@@ -391,12 +435,31 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     DrawModel(tm.curbL, {0, 0.04f, 0}, 1.f, WHITE);
     DrawModel(tm.curbR, {0, 0.04f, 0}, 1.f, WHITE);
     if (tm.windows.meshCount > 0) { rlDisableBackfaceCulling(); DrawModel(tm.windows, {0, 0, 0}, 1.f, WHITE); rlEnableBackfaceCulling(); }
-    Color fog{16, 12, 40, 255};
+    Color fog = coastal ? Color{120, 80, 90, 255} : Color{16, 12, 40, 255};
     for (size_t i = 0; i < tm.buildings.size(); i++) {
         Vector3 b = tm.buildings[i];
         float dist = Vector3Distance(b, cam.position);
         float fade = 1.f - fminf(dist / 700.f, 0.7f);
         Color bc = ColorLerp(fog, tm.buildingColors[i], fade);
+        if (coastal) {
+            bool palm = tm.buildingColors[i].g > 100 && tm.buildingColors[i].r < 100;
+            if (palm) {
+                // b.y is the full palm height
+                DrawCylinder({b.x, b.y * 0.5f, b.z}, 0.35f, 0.22f, b.y, 6, ColorLerp(fog, Color{120, 85, 55, 255}, fade));
+                DrawSphere({b.x, b.y + 0.6f, b.z}, 2.2f, ColorLerp(fog, tm.buildingColors[i], fade));
+                DrawSphere({b.x + 1.2f, b.y + 0.2f, b.z + 0.8f}, 1.5f, ColorLerp(fog, ColorBrightness(tm.buildingColors[i], 0.15f), fade));
+                DrawSphere({b.x - 1.1f, b.y + 0.2f, b.z - 0.7f}, 1.5f, ColorLerp(fog, ColorBrightness(tm.buildingColors[i], -0.1f), fade));
+            } else {
+                // beach hut: box body + pyramid roof
+                DrawCubeV({b.x, 1.1f, b.z}, {4.5f, 2.2f, 3.5f}, bc);
+                rlPushMatrix();
+                rlTranslatef(b.x, 2.2f, b.z);
+                rlRotatef(45.f, 0, 1, 0);
+                DrawCylinder({0, 0.9f, 0}, 3.1f, 0.05f, 1.8f, 4, ColorLerp(fog, Color{150, 70, 50, 255}, fade));
+                rlPopMatrix();
+            }
+            continue;
+        }
         DrawCubeV(b, {10, b.y * 2, 10}, bc);
         DrawCubeV({b.x, b.y * 2 + 1.2f, b.z}, {6.5f, 2.4f, 6.5f}, ColorBrightness(bc, -0.25f));
         Color trim = (i % 3 == 0) ? Color{0, 229, 220, 255} : (i % 3 == 1) ? Color{255, 45, 130, 255} : Color{255, 200, 40, 255};
@@ -405,7 +468,7 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             DrawCylinder({b.x, b.y * 2 + 5.f, b.z}, 0.25f, 0.08f, 6.f, 6, ColorBrightness(bc, 0.5f));
     }
     // Street furniture follows the road tangent, outside the drivable corridor.
-    for (size_t k=0;k<r.track.center.size();k+=12) {
+    for (size_t k=0;!coastal && k<r.track.center.size();k+=12) {
         sim::Vec2 c=r.track.center[k], d=r.track.dirAt(r.track.cum[k]);
         sim::Vec2 n{-d.y,d.x};
         for (int side=-1;side<=1;side+=2) {
@@ -422,7 +485,7 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         }
     }
     // Three identifiable gateway arches provide district rhythm and navigation cues.
-    for (int district=1;district<=3;district++) {
+    for (int district=1;!coastal && district<=3;district++) {
         float at=r.track.total*district*.25f;
         sim::Vec2 c=r.track.pointAt(at), d=r.track.dirAt(at), n{-d.y,d.x};
         rlPushMatrix(); rlTranslatef(c.x,0,c.y); rlRotatef(-atan2f(d.y,d.x)*RAD2DEG,0,1,0);
@@ -449,12 +512,27 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             DrawCubeV({s.x, 10.f + band * 12.f, s.z}, {9.4f, 0.7f, 9.4f}, {0, 229, 220, 255});
         DrawCubeV({s.x, 61.f, s.z}, {6.f, 0.7f, 6.f}, {255, 45, 130, 255});
     }
+    if (coastal) {
+        // lighthouse standing in the shallows on the ocean side
+        Vector3 s = tm.boundsCenter;
+        s.x += tm.boundsRadius + 180.f;
+        s.z += tm.boundsRadius * 0.4f;
+        for (int band = 0; band < 5; band++)
+            DrawCylinder({s.x, 4.f + band * 8.f, s.z}, 4.2f - band * 0.5f, 3.8f - band * 0.5f, 8.f, 12,
+                         band % 2 == 0 ? Color{235, 230, 220, 255} : Color{200, 60, 55, 255});
+        DrawCylinder({s.x, 42.f, s.z}, 2.6f, 2.6f, 4.f, 12, {40, 40, 50, 255});
+        float glow = 0.6f + 0.4f * std::sin(GetTime() * 2.0);
+        DrawSphere({s.x, 43.f, s.z}, 2.f * glow, {255, 240, 180, 255});
+        DrawCylinder({s.x, 45.5f, s.z}, 3.f, 0.05f, 2.4f, 12, {200, 60, 55, 255});
+    }
     // barriers + checkpoint gates + start banner
     for (size_t i = 0; i < r.track.center.size(); i += 4) {
         sim::Vec2 c = r.track.center[i];
         sim::Vec2 d = r.track.dirAt(r.track.cum[i]);
         sim::Vec2 n{-d.y, d.x};
-        Color bc = (i / 4) % 2 == 0 ? Color{0, 229, 220, 255} : Color{255, 45, 130, 255};
+        Color bc = coastal
+            ? ((i / 4) % 2 == 0 ? Color{245, 245, 245, 255} : Color{60, 120, 190, 255})
+            : ((i / 4) % 2 == 0 ? Color{0, 229, 220, 255} : Color{255, 45, 130, 255});
         DrawCubeV({c.x + n.x * (r.track.halfWidth + 0.6f), 0.8f, c.y + n.y * (r.track.halfWidth + 0.6f)}, {0.5f, 1.6f, 0.5f}, bc);
         DrawCubeV({c.x - n.x * (r.track.halfWidth + 0.6f), 0.8f, c.y - n.y * (r.track.halfWidth + 0.6f)}, {0.5f, 1.6f, 0.5f}, bc);
     }
@@ -521,18 +599,19 @@ struct MenuResult { bool quit = false; };
 
 // returns true if the user chose "race"
 static void drawTitle(const GameApp& app, int sel) {
-    const char* items[] = {"START RACE", "GARAGE", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
+    const char* items[] = {"START RACE", "GARAGE", "TRACK", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
     drawTextOutline("OVERDRIVE", GetScreenWidth() / 2 - 170, 60, 64, {255, 45, 130, 255});
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         const char* val = "";
         if (i == 1) val = roster[app.settings.playerVehicle % (int)roster.size()].name.c_str();
-        if (i == 2) val = diffName(app.settings.aiDifficulty);
-        if (i == 3) val = TextFormat("%d", app.settings.laps);
-        if (i == 4) val = app.settings.quality ? "HIGH" : "LOW";
-        if (i == 5) val = TextFormat("%d", app.settings.fpsCap);
+        if (i == 2) val = sim::trackDefs()[app.settings.trackIndex % (int)sim::trackDefs().size()].name.c_str();
+        if (i == 3) val = diffName(app.settings.aiDifficulty);
+        if (i == 4) val = TextFormat("%d", app.settings.laps);
+        if (i == 5) val = app.settings.quality ? "HIGH" : "LOW";
+        if (i == 6) val = TextFormat("%d", app.settings.fpsCap);
         drawTextOutline(TextFormat("%s%s%s%s", i == sel ? "> " : "  ", items[i], val[0] ? ": " : "", val),
                         GetScreenWidth() / 2 - 220, 200 + i * 44, 28, i == sel ? GOLD : WHITE);
     }
@@ -604,24 +683,26 @@ static bool titleMenu(GameApp& app) {
     if(app.settings.playerVehicle<0 || app.settings.playerVehicle>=8 || !(app.settings.unlocked&(1u<<app.settings.playerVehicle))) app.settings.playerVehicle=0;
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     while (!WindowShouldClose()) {
-        if (menuPressed(KEY_UP,GAMEPAD_BUTTON_LEFT_FACE_UP)) sel = (sel + 6) % 7;
-        if (menuPressed(KEY_DOWN,GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel = (sel + 1) % 7;
+        if (menuPressed(KEY_UP,GAMEPAD_BUTTON_LEFT_FACE_UP)) sel = (sel + 7) % 8;
+        if (menuPressed(KEY_DOWN,GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel = (sel + 1) % 8;
         if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_RIGHT)) {
             int d = IsKeyPressed(KEY_LEFT) ? -1 : 1;
             if (sel == 1) garageMenu(app);
-            if (sel == 2) app.settings.aiDifficulty = (app.settings.aiDifficulty + 3 + d) % 3;
-            if (sel == 3) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
-            if (sel == 4) app.settings.quality = 1 - app.settings.quality;
-            if (sel == 5) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
+            if (sel == 2) app.settings.trackIndex = (app.settings.trackIndex + (int)sim::trackDefs().size() + d) % (int)sim::trackDefs().size();
+            if (sel == 3) app.settings.aiDifficulty = (app.settings.aiDifficulty + 3 + d) % 3;
+            if (sel == 4) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
+            if (sel == 5) app.settings.quality = 1 - app.settings.quality;
+            if (sel == 6) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
         }
         if (menuPressed(KEY_ENTER,GAMEPAD_BUTTON_RIGHT_FACE_DOWN) || IsKeyPressed(KEY_SPACE)) {
             if (sel == 0) return true;
-            if (sel == 6) return false;
+            if (sel == 7) return false;
             if (sel == 1) garageMenu(app);
-            if (sel == 2) app.settings.aiDifficulty = (app.settings.aiDifficulty + 1) % 3;
-            if (sel == 3) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
-            if (sel == 4) app.settings.quality = 1 - app.settings.quality;
-            if (sel == 5) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
+            if (sel == 2) app.settings.trackIndex = (app.settings.trackIndex + 1) % (int)sim::trackDefs().size();
+            if (sel == 3) app.settings.aiDifficulty = (app.settings.aiDifficulty + 1) % 3;
+            if (sel == 4) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
+            if (sel == 5) app.settings.quality = 1 - app.settings.quality;
+            if (sel == 6) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
         }
         drawTitle(app, sel);
     }
@@ -653,13 +734,6 @@ static int pauseMenu(const GameApp& app) {
     return 2;
 }
 
-// Records update: best lap any finish; best RACE time only counts on a win.
-static void updateRecords(sim::Settings& s, const sim::Car& p) {
-    if (p.bestLap > 0 && (s.bestLapMs < 0 || p.bestLap * 1000.f < s.bestLapMs))
-        s.bestLapMs = (int)(p.bestLap * 1000.f);
-    if (p.finishPlace == 1 && (s.bestRaceMs < 0 || p.raceTime * 1000.f < s.bestRaceMs))
-        s.bestRaceMs = (int)(p.raceTime * 1000.f);
-}
 
 static void drawResults(const GameApp& app, const sim::Race& race) {
     const sim::Car& p = race.cars[0];
@@ -671,11 +745,12 @@ static void drawResults(const GameApp& app, const sim::Race& race) {
                     GetScreenWidth() / 2 - 170, 200, 28, WHITE);
     if (p.bestLap > 0)
         drawTextOutline(TextFormat("BEST LAP   %0.2f s", p.bestLap), GetScreenWidth() / 2 - 170, 240, 28, WHITE);
-    if (app.settings.bestLapMs > 0)
-        drawTextOutline(TextFormat("TRACK BEST LAP   %d:%05.2f", app.settings.bestLapMs / 60000, std::fmod(app.settings.bestLapMs / 1000.f, 60.f)),
+    int tr = race.trackIndex;
+    if (tr >= 0 && tr < 8 && app.settings.bestLapMsT[tr] > 0)
+        drawTextOutline(TextFormat("TRACK BEST LAP   %d:%05.2f", app.settings.bestLapMsT[tr] / 60000, std::fmod(app.settings.bestLapMsT[tr] / 1000.f, 60.f)),
                         GetScreenWidth() / 2 - 170, 300, 22, GRAY);
-    if (app.settings.bestRaceMs > 0)
-        drawTextOutline(TextFormat("TRACK BEST WIN   %d:%05.2f", app.settings.bestRaceMs / 60000, std::fmod(app.settings.bestRaceMs / 1000.f, 60.f)),
+    if (tr >= 0 && tr < 8 && app.settings.bestRaceMsT[tr] > 0)
+        drawTextOutline(TextFormat("TRACK BEST WIN   %d:%05.2f", app.settings.bestRaceMsT[tr] / 60000, std::fmod(app.settings.bestRaceMsT[tr] / 1000.f, 60.f)),
                         GetScreenWidth() / 2 - 170, 330, 22, GRAY);
     drawTextOutline("ENTER continue", GetScreenWidth() / 2 - 90, GetScreenHeight() - 60, 22, GOLD);
     EndDrawing();
@@ -684,7 +759,7 @@ static void drawResults(const GameApp& app, const sim::Race& race) {
 static void resultsScreen(GameApp& app, const sim::Race& race) {
     const sim::Car& p = race.cars[0];
     // persist bests
-    updateRecords(app.settings, p);
+    sim::updateRecords(app.settings, p, race.trackIndex);
     sim::awardRace(app.settings, p.finishPlace);
     sim::saveSettings(app.settings, app.settingsPath);
     while (!WindowShouldClose()) {
@@ -702,13 +777,13 @@ int runGame(GameApp& app) {
         bool quitToTitle = false;
         while (!quitToTitle && !WindowShouldClose()) {
             sim::Race race;
-            race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle);
+            race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle, app.settings.trackIndex);
             Camera3D cam{};
             cam.up = {0, 1, 0};
             cam.fovy = 60;
             cam.projection = CAMERA_PERSPECTIVE;
             ChaseCam cc;
-            TrackMeshes tm = buildTrack(race.track, app.settings.quality);
+            TrackMeshes tm = buildTrack(race.track, app.settings.quality, sim::trackDefs()[race.trackIndex].theme);
             double acc = 0;
             int action = 0; // 0 racing, 1 restart, 2 quit to title
             while (!WindowShouldClose() && action == 0 && !race.cars[0].finished) {
@@ -744,12 +819,12 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
     InitWindow(1366, 768, "overdrive-demo");
     SetTargetFPS(600);
     sim::Race race;
-    race.init(3);
+    race.init(3, app.settings.aiDifficulty, app.settings.playerVehicle, app.settings.trackIndex);
     Camera3D cam{};
     cam.up = {0, 1, 0};
     cam.fovy = 60;
     cam.projection = CAMERA_PERSPECTIVE;
-    TrackMeshes tm = buildTrack(race.track, app.settings.quality);
+    TrackMeshes tm = buildTrack(race.track, app.settings.quality, sim::trackDefs()[race.trackIndex].theme);
     ChaseCam cc;
     int taken = 0;
     bool gotCorner = false, gotBoost = false, gotPause = false, gotFinish = false;
@@ -805,13 +880,13 @@ int runUITest(GameApp& app) {
     InitWindow(1280, 720, "overdrive-uitest");
     SetTargetFPS(240);
     sim::Race race;
-    race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle);
+    race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle, app.settings.trackIndex);
     Camera3D cam{};
     cam.up = {0, 1, 0};
     cam.fovy = 60;
     cam.projection = CAMERA_PERSPECTIVE;
     ChaseCam cc;
-    TrackMeshes tm = buildTrack(race.track, app.settings.quality);
+    TrackMeshes tm = buildTrack(race.track, app.settings.quality, sim::trackDefs()[race.trackIndex].theme);
     bool polledOk = true;
     double acc = 0;
     for (int f = 0; f < 60 * 200 && !race.cars[0].finished && !WindowShouldClose(); f++) {
@@ -853,7 +928,7 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
     drawPause(0);
     TakeScreenshot((prefix + "-pause.png").c_str());
     sim::Race race;
-    race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle);
+    race.init(app.settings.laps, app.settings.aiDifficulty, app.settings.playerVehicle, app.settings.trackIndex);
     for(int v=0;v<8;v++) {
         drawGarage(app,v,.65f);
         TakeScreenshot((prefix+"-garage-"+std::to_string(v)+".png").c_str());
@@ -864,7 +939,7 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
         if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) aiIn.boost = true;
         race.step({aiIn, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
     }
-    updateRecords(app.settings, race.cars[0]); // same win-only rules as the real results path
+    sim::updateRecords(app.settings, race.cars[0], race.trackIndex); // same win-only rules as the real results path
     drawResults(app, race);
     TakeScreenshot((prefix + "-results.png").c_str());
     CloseWindow();

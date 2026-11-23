@@ -91,8 +91,13 @@ struct Track {
     float nearest(Vec2 p, float hint) const; // distance along track of closest sample
 };
 
-// Prototype track: original "Neon Loop" test circuit.
-std::vector<Vec2> neonLoopControlPoints();
+struct TrackDef {
+    std::string name;
+    std::vector<Vec2> ctrl;
+    float halfWidth = 9.f;
+    int theme = 0;              // 0 neon city, 1 coastal
+};
+const std::vector<TrackDef>& trackDefs();
 std::vector<CarSpec> defaultRoster();
 
 struct Race {
@@ -107,7 +112,8 @@ struct Race {
     mutable uint32_t rngState = 0x9E3779B9u;
 
     AITune aiTune[8];
-    void init(int laps, int aiDifficulty = 1, int playerVehicle = 0);
+    int trackIndex = 0;
+    void init(int laps, int aiDifficulty = 1, int playerVehicle = 0, int track = 0);
     void step(const std::vector<CarInput>& inputs);
     uint32_t rand() const;
     float time() const { return tick * STEP; }
@@ -131,10 +137,16 @@ struct Settings {
         keyAccelAlt = 87, keyBrakeAlt = 83, keyLeftAlt = 65, keyRightAlt = 68, // WASD
         keyHandbrake = 32, keyBoost = 340 /*left shift*/, keyPause = 256 /*esc*/;
     float padDeadzone = 0.18f, padSteerSens = 1.0f;
-    int bestLapMs = -1, bestRaceMs = -1;
+    int trackIndex = 0;
+    int bestLapMs = -1, bestRaceMs = -1;      // legacy, migrated into per-track arrays
+    int bestLapMsT[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
+    int bestRaceMsT[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
     int credits = 0, racesCompleted = 0, wins = 0;
     unsigned unlocked = 7; // first three vehicles owned, the rest earned offline
 };
+
+// Records update: best lap any finish; best RACE time only counts on a win.
+void updateRecords(Settings& s, const Car& p, int track);
 
 // Pure input mapping shared by the interactive path (polled hardware) and the
 // demo path (scripted axes), so both exercise the same translation to CarInput.

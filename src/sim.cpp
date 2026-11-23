@@ -83,15 +83,6 @@ float Track::nearest(Vec2 p, float hint) const {
     return cum[besti];
 }
 
-std::vector<Vec2> neonLoopControlPoints() {
-    // Original closed circuit: long straight, hairpin, S-curves, sweeper.
-    return {
-        {0, 0}, {120, 0}, {190, 10}, {230, 45}, {235, 100},
-        {200, 140}, {140, 150}, {110, 185}, {120, 240}, {90, 285},
-        {30, 290}, {-25, 260}, {-40, 200}, {-20, 150}, {-60, 110}, {-70, 50}, {-40, 15}
-    };
-}
-
 
 AITune difficultyTune(int level) {
     AITune t;
@@ -100,7 +91,7 @@ AITune difficultyTune(int level) {
     return t;
 }
 
-void Race::init(int laps, int aiDifficulty, int playerVehicle) {
+void Race::init(int laps, int aiDifficulty, int playerVehicle, int trackIdx) {
     lapsToWin = laps;
     tick = 0; countdown = 3.2f; finishedCount = 0;
     specs = defaultRoster();
@@ -112,7 +103,10 @@ void Race::init(int laps, int aiDifficulty, int playerVehicle) {
         specs[i] = roster[(playerVehicle + i) % roster.size()];
         aiTune[i] = difficultyTune(aiDifficulty);
     }
-    track.build(neonLoopControlPoints(), 9.f, 24);
+    const auto& defs = trackDefs();
+    trackIndex = ((trackIdx % (int)defs.size()) + (int)defs.size()) % (int)defs.size();
+    const TrackDef& def = defs[trackIndex];
+    track.build(def.ctrl, def.halfWidth, 24);
     cars.clear();
     int nCars = (int)specs.size();
     Vec2 dir = track.dirAt(0);
@@ -308,6 +302,14 @@ CarInput aiDrive(const Race& race, int i) {
 }
 
 // ---- settings ----
+void updateRecords(Settings& s, const Car& p, int track) {
+    if (track < 0 || track > 7) return;
+    if (p.bestLap > 0 && (s.bestLapMsT[track] < 0 || p.bestLap * 1000.f < s.bestLapMsT[track]))
+        s.bestLapMsT[track] = (int)(p.bestLap * 1000.f);
+    if (p.finishPlace == 1 && (s.bestRaceMsT[track] < 0 || p.raceTime * 1000.f < s.bestRaceMsT[track]))
+        s.bestRaceMsT[track] = (int)(p.raceTime * 1000.f);
+}
+
 bool saveSettings(const Settings& s, const std::string& path) {
     std::ofstream f(path, std::ios::trunc);
     if (!f) return false;
@@ -322,7 +324,10 @@ bool saveSettings(const Settings& s, const std::string& path) {
       << "\npadDeadzone " << s.padDeadzone << "\npadSteerSens " << s.padSteerSens
       << "\naiDifficulty " << s.aiDifficulty << "\nlaps " << s.laps
       << "\ncredits " << s.credits << "\nracesCompleted " << s.racesCompleted << "\nwins " << s.wins << "\nunlocked " << s.unlocked
-      << "\nbestLapMs " << s.bestLapMs << "\nbestRaceMs " << s.bestRaceMs << "\n";
+      << "\ntrackIndex " << s.trackIndex << "\nbestLapMs " << s.bestLapMs << "\nbestRaceMs " << s.bestRaceMs;
+    for (int i = 0; i < 8; i++)
+        f << "\nbestLapMsT" << i << " " << s.bestLapMsT[i] << "\nbestRaceMsT" << i << " " << s.bestRaceMsT[i];
+    f << "\n";
     return f.good();
 }
 
@@ -365,6 +370,9 @@ Settings loadSettings(const std::string& path) {
             else if (key == "racesCompleted") tmp.racesCompleted = std::stoi(val);
             else if (key == "wins") tmp.wins = std::stoi(val);
             else if (key == "unlocked") tmp.unlocked = (unsigned)std::stoul(val);
+            else if (key == "trackIndex") tmp.trackIndex = std::stoi(val);
+            else if (key.rfind("bestLapMsT",0)==0) tmp.bestLapMsT[std::stoi(key.substr(10))%8] = std::stoi(val);
+            else if (key.rfind("bestRaceMsT",0)==0) tmp.bestRaceMsT[std::stoi(key.substr(11))%8] = std::stoi(val);
             else if (key == "bestLapMs") tmp.bestLapMs = std::stoi(val);
             else if (key == "bestRaceMs") tmp.bestRaceMs = std::stoi(val);
         } catch (...) { return s; }
