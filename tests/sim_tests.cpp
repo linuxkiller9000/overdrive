@@ -296,7 +296,7 @@ int runTests() {
         auto mk=[](){ static sim::Race r; r=sim::Race(); r.init(3); r.countdown=0; return &r; };
         sim::Race* r=mk();
         CHECK((int)r->cars.size()==8, "eight-car grid");
-        CHECK((int)r->pickups.size()==sim::PK_COUNT, "one pickup per type");
+        CHECK((int)r->pickups.size()==2*sim::PK_COUNT, "two pickups per type per lap");
         // BOLT hits the car ahead and damages it
         r->cars[1].pos = r->cars[0].pos + sim::Vec2{25,0}; r->cars[1].heading=0; r->cars[1].vel={};
         r->cars[0].heading=0; r->cars[0].progress=0; r->cars[1].progress=25;
@@ -330,14 +330,14 @@ int runTests() {
         std::vector<sim::CarInput> i3(8); i3[0].fire=true; r->step(i3);
         CHECK(sim::len(r->cars[1].vel)>5.f, "barge pushes");
         // AI uses held weapons and races complete with combat on, all 8 finish eventually
-        sim::Race ra; ra.init(1,1,0,0);
+        sim::Race ra; ra.init(3,1,0,0);
         int fired=0; bool all=false;
-        for(int i=0;i<60*400&&!all;i++){
+        for(int i=0;i<60*500&&!all;i++){
             std::vector<sim::CarInput> in(8); for(int k=0;k<8;k++) in[k]=sim::aiDrive(ra,k);
-            for(int k=0;k<8;k++) if(in[k].fire && ra.cars[k].heldPickup>=0) fired++;
+            for(int k=1;k<8;k++) if(in[k].fire && ra.cars[k].heldPickup>=0) fired++;   // AI cars only (player index 0 excluded)
             ra.step(in); all=ra.finishedCount==8;
         }
-        CHECK(fired>0, "AI fires weapons");
+        CHECK(fired>=8, "AI fires weapons regularly over a 3-lap race");
         CHECK(ra.finishedCount>=6, "AI field finishes with combat on");
         std::printf("combat race: fired=%d finished=%d\n", fired, ra.finishedCount);
     }

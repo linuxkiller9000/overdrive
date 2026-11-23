@@ -51,6 +51,7 @@ struct AITune {
     float wobbleMag = 0.2f;    // mistake magnitude (rad applied to steer)
     int wobbleMask = 0x3FF;    // mistake frequency: rand()&mask == 0
     bool usesBoost = true;
+    float pickupReach = 40.f;  // decision quality: how far ahead the AI notices and steers for a weapon pickup (0 = never)
     int fireMask = 0x3F;       // weapon-decision cadence: rand()&mask == 0
 };
 AITune difficultyTune(int level); // 0 easy, 1 normal, 2 hard

@@ -87,8 +87,8 @@ float Track::nearest(Vec2 p, float hint) const {
 
 AITune difficultyTune(int level) {
     AITune t;
-    if (level == 0) { t.pace = 0.85f; t.steerGain = 1.7f; t.wobbleMag = 0.45f; t.wobbleMask = 0x7F; t.usesBoost = false; t.fireMask = 0xFF; }
-    else if (level == 2) { t.pace = 1.0f; t.steerGain = 2.6f; t.wobbleMag = 0.08f; t.wobbleMask = 0xFFF; t.fireMask = 0x1F; }
+    if (level == 0) { t.pace = 0.85f; t.steerGain = 1.7f; t.wobbleMag = 0.45f; t.wobbleMask = 0x7F; t.usesBoost = false; t.fireMask = 0xFF; t.pickupReach = 0.f; }
+    else if (level == 2) { t.pace = 1.0f; t.steerGain = 2.6f; t.wobbleMag = 0.08f; t.wobbleMask = 0xFFF; t.fireMask = 0x1F; t.pickupReach = 60.f; }
     return t;
 }
 
@@ -140,13 +140,13 @@ void Race::init(int laps, int aiDifficulty, int playerVehicle, int trackIdx) {
     // Combat pickups: one of each type around the lap, alternating road sides.
     pickups.clear();
     shots.clear(); mines.clear(); orbs.clear();
-    for (int k = 0; k < PK_COUNT; k++) {
-        float d = track.total * (0.07f + 0.11f * k);
+    for (int k = 0; k < PK_COUNT * 2; k++) {   // two full sets per lap so a field of 8 actually has weapons to use
+        float d = track.total * (0.04f + (0.92f / (PK_COUNT * 2)) * k);
         Vec2 dd = track.dirAt(d);
         Vec2 rr = {-dd.y, dd.x};
         Pickup p;
         p.pos = track.pointAt(d) + rr * (k % 2 == 0 ? 3.5f : -3.5f);
-        p.type = k;
+        p.type = k % PK_COUNT;
         pickups.push_back(p);
     }
 }
@@ -465,6 +465,16 @@ CarInput aiDrive(const Race& race, int i) {
     // pure pursuit: aim at a point ahead on the centerline
     float look = 6.f + speed * 0.55f;
     Vec2 target = race.track.pointAt(c.sHint + look);
+    // a weapon is a racing decision, not a physics bonus: with an empty hand, steer for a pickup that is close ahead
+    if (c.heldPickup < 0 && tune.pickupReach > 0.f) {
+        float best = tune.pickupReach;
+        for (const auto& p : race.pickups) {
+            if (!p.active) continue;
+            Vec2 dp = p.pos - c.pos;
+            float ahead = dot(dp, fwd), side = std::fabs(dp.x * fwd.y - dp.y * fwd.x);
+            if (ahead > 4.f && ahead < best && side < 7.f) { best = ahead; target = p.pos; }
+        }
+    }
     Vec2 to = target - c.pos;
     float ang = wrapAngle(std::atan2(to.y, to.x) - c.heading);
     in.steer = clampf(ang * tune.steerGain, -1.f, 1.f);
