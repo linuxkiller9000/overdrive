@@ -97,7 +97,20 @@ int runTests() {
         sim::Settings d = sim::loadSettings(p);
         CHECK(d.width == 1280 && d.height == 720, "corrupt settings fall back to defaults");
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (7 groups)\n");
+    // car-car collision separates vehicles and exchanges velocity
+    {
+        sim::Race r6; r6.init(1);
+        r6.countdown = 0;
+        r6.cars[1].pos = {r6.cars[0].pos.x + 1.f, r6.cars[0].pos.y};
+        r6.cars[1].vel = {-5.f, 0};
+        r6.cars[0].vel = {5.f, 0};
+        float before = sim::len(r6.cars[1].pos - r6.cars[0].pos);
+        for (int i = 0; i < 10; i++) r6.step({{}, {}, {}});
+        float after = sim::len(r6.cars[1].pos - r6.cars[0].pos);
+        CHECK(after >= before, "collision separates cars");
+        CHECK(sim::len(r6.cars[0].pos - r6.cars[1].pos) > 1.5f, "no overlap after collision");
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (8 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }

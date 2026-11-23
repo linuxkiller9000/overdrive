@@ -70,8 +70,13 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
                 sim::Vec2 c = t.center[i];
                 sim::Vec2 d = t.dirAt(t.cum[i]);
                 sim::Vec2 n{-d.y, d.x};
-                float off = t.halfWidth + 20.f + rnd() * 30.f;
+                float off = t.halfWidth + 62.f + rnd() * 40.f;
                 float x = c.x + n.x * off * side, z = c.y + n.y * off * side;
+                // keep the camera corridor clear: reject if near ANY track point
+                bool tooClose = false;
+                for (auto& tp : t.center)
+                    if (sim::len(sim::Vec2{x, z} - tp) < t.halfWidth + 55.f) { tooClose = true; break; }
+                if (tooClose) continue;
                 float h = 12.f + rnd() * 42.f;
                 tm.buildings.push_back({x, h * 0.5f, z});
                 Color bc{(unsigned char)(20 + rnd() * 30), (unsigned char)(25 + rnd() * 35), (unsigned char)(60 + rnd() * 60), 255};
@@ -185,12 +190,12 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, Camera3D& cam, 
     const sim::Car& p = r.cars[0];
     sim::Vec2 fwd{std::cos(p.heading), std::sin(p.heading)};
     float speed = sim::len(p.vel);
-    float dist = 8.f + speed * 0.14f;
-    Vector3 camPos = {p.pos.x - fwd.x * dist, 5.5f + speed * 0.05f, p.pos.y - fwd.y * dist};
+    float dist = 9.f + speed * 0.12f;
+    Vector3 camPos = {p.pos.x - fwd.x * dist, 5.f + speed * 0.04f, p.pos.y - fwd.y * dist};
     static Vector3 smoothed = camPos;
     smoothed = Vector3Lerp(smoothed, camPos, 0.18f);
     cam.position = smoothed;
-    cam.target = {p.pos.x + fwd.x * 7.f, 1.f, p.pos.y + fwd.y * 7.f};
+    cam.target = {p.pos.x + fwd.x * 3.f, 0.8f, p.pos.y + fwd.y * 3.f};
     cam.fovy = 60.f + speed * 0.35f + (p.boostLeft > 0 ? 8.f : 0.f);
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
@@ -222,9 +227,9 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, Camera3D& cam, 
         rlPushMatrix();
         rlTranslatef(st.x, 0, st.y);
         rlRotatef(-std::atan2(sd.y, sd.x) * 180.f / 3.14159265f, 0, 1, 0);
-        DrawCubeV({0, 4.f, -r.track.halfWidth}, {0.8f, 8.f, 0.8f}, WHITE);
-        DrawCubeV({0, 4.f, r.track.halfWidth}, {0.8f, 8.f, 0.8f}, WHITE);
-        DrawCubeV({0, 8.f, 0}, {0.8f, 0.8f, 2 * r.track.halfWidth + 1.f}, {200, 200, 220, 255});
+        DrawCubeV({0, 4.5f, -r.track.halfWidth}, {0.6f, 9.f, 0.6f}, WHITE);
+        DrawCubeV({0, 4.5f, r.track.halfWidth}, {0.6f, 9.f, 0.6f}, WHITE);
+        DrawCubeV({0, 9.f, 0}, {0.6f, 0.6f, 2 * r.track.halfWidth + 1.f}, {200, 200, 220, 255});
         rlPopMatrix();
     }
     for (auto& pk : r.pickups)
@@ -278,8 +283,8 @@ int runGame(GameApp& app) {
 
 int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int shotEvery, int shotCount) {
     SetConfigFlags(FLAG_WINDOW_HIDDEN | FLAG_MSAA_4X_HINT);
-    InitWindow(1280, 720, "overdrive-shots");
-    SetTargetFPS(240);
+    InitWindow(1280, 720, "overdrive-demo");
+    SetTargetFPS(600);
     sim::Race race;
     race.init(3);
     Camera3D cam{};
@@ -288,20 +293,36 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
     cam.projection = CAMERA_PERSPECTIVE;
     TrackMeshes tm = buildTrack(race.track, app.settings.quality);
     int taken = 0;
-    for (int f = 0; f < warmFrames + shotEvery * shotCount; f++) {
-        sim::CarInput in{};
-        in.throttle = 1;
-        if (race.cars[0].boostCharges > 0 && race.countdown <= 0) in.boost = true;
+    bool gotCorner = false, gotBoost = false, gotPause = false, gotFinish = false;
+    auto snap = [&](const char* tag) {
+        char name[256];
+        std::snprintf(name, sizeof(name), "%s-%02d-%s.png", prefix.c_str(), taken, tag);
+        TakeScreenshot(name);
+        taken++;
+    };
+    for (int f = 0; f < 60 * 300; f++) {
+        sim::CarInput in = sim::aiDrive(race, 0); // player drives the racing line
+        if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) in.boost = true;
         race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
-        if (f >= warmFrames && (f - warmFrames) % shotEvery == 0) {
-            drawFrame(race, tm, cam, app, 0);
-            char name[256];
-            std::snprintf(name, sizeof(name), "%s-%02d.png", prefix.c_str(), taken);
-            TakeScreenshot(name);
-            taken++;
-            if (taken >= shotCount) break;
-        }
+        float t = race.time();
+        // grant one boost charge mid-race so activation is guaranteed on camera
+        if (!gotBoost && race.cars[0].lap >= 1 && race.cars[0].boostCharges == 0 && t > 30.f && race.cars[0].boostLeft <= 0)
+            race.cars[0].boostCharges = 1;
+        if (f % 3 == 0) drawFrame(race, tm, cam, app, 0); // draw often enough that the chase camera tracks
+        if (t >= 5.f && taken == 0) { snap("grid-straight"); }
+        else if (!gotCorner && race.cars[0].sHint > race.track.total * 0.35f && race.cars[0].sHint < race.track.total * 0.55f) {
+            snap("corner"); gotCorner = true;
+        } else if (gotCorner && !gotBoost && race.cars[0].boostLeft > 0.5f) {
+            snap("turbo"); gotBoost = true;
+        } else if (gotBoost && !gotPause && f % 3 == 0) {
+            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), {0, 0, 0, 140});
+            DrawText("PAUSED", GetScreenWidth() / 2 - 80, GetScreenHeight() / 2 - 30, 36, WHITE);
+            DrawText("ESC resume | F3 fps | F11 fullscreen", GetScreenWidth() / 2 - 150, GetScreenHeight() / 2 + 20, 18, GRAY);
+            EndDrawing();
+            snap("pause"); gotPause = true;
+        } else if (gotPause && race.cars[0].finished && f % 3 == 0) { snap("finish"); gotFinish = true; break; }
     }
     CloseWindow();
-    return 0;
+    std::printf("demo frames: %d (finish=%d)\n", taken, (int)gotFinish);
+    return gotFinish ? 0 : 2;
 }

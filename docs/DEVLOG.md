@@ -10,3 +10,18 @@
 - Visual verification: rendered frames under Xvfb inspected; start-gantry alignment and building offsets fixed.
 - Verified by measurement: binary links only libc/libstdc++/libgcc/libm; GL and windowing load at runtime.
 - NOT yet done: Windows cross-build, real-hardware FPS, native Wayland runtime test, audio, menus beyond pause, more power-ups/tracks/modes (Phase 3+).
+
+## v0.1.1 - camera and visibility fixes (2026-11-23)
+
+- Chase camera now targets 3m ahead of the car and the demo draws every 3rd
+  frame so the smoothed camera actually tracks (previously snapshot frames
+  caught the camera far behind the car, hiding it).
+- Buildings rejected within halfWidth+55m of any track point and placed at
+  halfWidth+62..102m; the corner camera corridor is now clear (was occluded
+  by buildings at the hairpin).
+- Start/finish gantry thinned and raised to y=9 so it no longer blocks the
+  speed HUD or the view.
+- Added car-car collision test (separation + velocity exchange); 8/8 test
+  groups pass.
+- Demo evidence re-captured: grid start, corner traffic, turbo activation,
+  pause overlay, finish banner (finish=1).
