@@ -2,7 +2,7 @@
 
 An original arcade combat racing game for Linux and Windows. Fast, accessible racing with tactical power-ups, built for modest hardware (target: Dell Inspiron N5010, Intel i3-370M, integrated graphics, 1366x768).
 
-Status: in development, not a complete release. Eight-vehicle garage milestone in progress. Native C++17 simulation core with a raylib 5.5 platform layer (OpenGL 2.1, X11 and Wayland backends). Private until you say otherwise.
+Status: in development, not a complete release. Eight-vehicle garage milestone in progress. Native C++17 simulation core with a raylib 5.5 platform layer (OpenGL 2.1, X11 and Wayland backends).
 
 ## Build (Linux)
 
@@ -61,3 +61,15 @@ Windows cross-build: configure raylib 5.5 and this project with the same
 with `PLATFORM=Desktop`, `OPENGL_VERSION=2.1`, examples off. Pass its build/raylib
 folder as RAYLIB_DIR. `run.bat` launches the packaged Windows executable. This
 recipe has compiled here but has not run on Windows.
+
+## Licence
+
+The OVERDRIVE source code (everything under `src/`, `tests/`, `tools/`, the build files and docs written for this project) is released under the GNU General Public License, version 2 (GPL-2.0). See `LICENSE` (text from https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt). If you distribute modified versions you must do so under the same licence and provide the corresponding source. No copyright holder name is asserted in this repository yet; add one before relying on per-file notices.
+
+Third-party 3D models in `assets/models/` are NOT GPL. Each keeps its own licence (CC BY 3.0 or CC0 1.0), listed with author and source in `assets/models/CREDITS.md` and shown in the in-game CREDITS screen. They are separate assets that this program loads at run time. raylib is not included; it is a separate zlib-licensed library you build yourself.
+
+Car names such as DODGE CHARGER, CAMARO ZL1, NISSAN GTR, DODGE CHALLENGER and NISSAN 180MX are shown only when the matching model file loads. The model licences cover the model files only. They do not grant any rights in manufacturer names, logos or vehicle designs. This project is not affiliated with or endorsed by any manufacturer. That is a notice, not a clearance. OVERDRIVE is original software and contains no code or assets from Blur, Asphalt or any other game.
+
+## Status
+
+Work in progress. Automated headless tests pass on Linux; the Windows build has only been cross-compiled, never run; performance on the Dell N5010 target is unmeasured.
