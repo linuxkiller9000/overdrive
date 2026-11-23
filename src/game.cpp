@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <vector>
 #include <fstream>
 #include <sstream>
@@ -226,12 +227,21 @@ static const CarParams kCarP[8] = {
     {4.5f, 2.5f, 1.00f, 1.70f, .30f, .80f, .90f, 1.00f, .55f, .6f},
     {4.7f, 1.9f, .55f, .98f, .30f, .70f, .30f, .50f, .26f, 0.f},
 };
+static CarParams g_cp;
+static CarParams carParamsFor(int design) {
+    if (design != 8) return kCarP[design & 7];
+    const sim::CustomCar& c = sim::g_custom;
+    return CarParams{c.L, c.W, c.belt, c.roof, c.c0, c.c1, c.nose, c.tail, c.yb, kCarP[c.base & 7].box};
+}
 static float smooth01(float x) { x = fminf(1.f, fmaxf(0.f, x)); return x * x * (3.f - 2.f * x); }
 static const std::vector<CarVert>& carMesh(int design) {
-    static std::vector<CarVert> cache[8];
-    std::vector<CarVert>& out = cache[design & 7];
+    static std::vector<CarVert> cache[9];
+    static CarParams lastCustom{};
+    int idx = design == 8 ? 8 : (design & 7);
+    std::vector<CarVert>& out = cache[idx];
+    CarParams P = carParamsFor(design);
+    if (design == 8 && memcmp(&P, &lastCustom, sizeof(P)) != 0) { out.clear(); lastCustom = P; }
     if (!out.empty()) return out;
-    const CarParams& P = kCarP[design & 7];
     const int NS = 22, NR = 6;
     // row positions per station (right half, then mirrored)
     std::vector<Vector3> grid((NS + 1) * (2 * NR));
@@ -299,7 +309,7 @@ static const std::vector<CarVert>& carMesh(int design) {
 }
 static void drawCarBody(int design, Color body, Color glass, Color dark, Color accent) {
     const std::vector<CarVert>& mesh = carMesh(design);
-    const CarParams& P = kCarP[design & 7];
+    const CarParams P = carParamsFor(design);
     rlDisableBackfaceCulling();
     rlBegin(RL_TRIANGLES);
     for (const CarVert& cv : mesh) {
@@ -318,6 +328,15 @@ static void drawCarBody(int design, Color body, Color glass, Color dark, Color a
         litBox({sd * W * .6f, P.tail * .8f, -L + .02f}, {.55f, .2f, .1f}, {255, 40, 60, body.a});
     }
     // original per-design add-ons
+    if (design == 8) {
+        const sim::CustomCar& cc = sim::g_custom;
+        if (cc.wing) {
+            float hh = cc.wing == 2 ? .75f : .45f;
+            litBox({0, P.tail + hh, -L + .5f}, {W * 1.7f, .1f, .6f}, dark);
+            for (int sd = -1; sd <= 1; sd += 2) litBox({sd * W * .6f, P.tail + hh * .5f, -L + .5f}, {.1f, hh, .3f}, dark);
+        }
+        if (cc.splitter) litBox({0, P.nose * .6f, L + .02f}, {W * (cc.splitter == 2 ? 2.1f : 1.7f) + .2f, .1f, cc.splitter == 2 ? .6f : .4f}, accent);
+    } else
     switch (design & 7) {
         case 1: litBox({0, P.tail + .45f, -L + .55f}, {W * 1.7f, .1f, .7f}, dark);              // rear wing
                 for (int sd = -1; sd <= 1; sd += 2) litBox({sd * W * .6f, P.tail + .25f, -L + .55f}, {.1f, .4f, .3f}, dark); break;
@@ -415,10 +434,11 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     if (!imported) drawCarBody(sp.design, body, glass, dark, accent);
     bool bigWheels = (sp.design == 2 || sp.design == 6);
     float wr = sp.radius * (bigWheels ? 0.52f : sp.design == 5 ? 0.36f : 0.42f);
-    float track = (sp.design == 5) ? 1.15f : (sp.design == 4 ? 1.45f : 1.3f);
+    CarParams cpw = carParamsFor(sp.design);
+    float track = sp.design == 8 ? cpw.W * .5f + .1f : (sp.design == 5) ? 1.15f : (sp.design == 4 ? 1.45f : 1.3f);
     for (int sx = -1; sx <= 1 && !imported; sx += 2)
         for (int sz = -1; sz <= 1; sz += 2) {
-            float wz = sz * (bigWheels ? 1.45f : 1.4f);
+            float wz = sp.design == 8 ? sz * cpw.L * .33f : sz * (bigWheels ? 1.45f : 1.4f);
             DrawCylinderEx({sx * (track - 0.3f), wr, wz}, {sx * track, wr, wz}, wr, wr, 10, {22, 24, 30, body.a});
             if (bigWheels) // hub
                 DrawCylinderEx({sx * track, wr, wz}, {sx * (track + 0.05f), wr, wz}, wr * 0.45f, wr * 0.45f, 8, {120,128,140,body.a});
@@ -768,6 +788,7 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     float segLen2 = fmaxf(sim::dot(seg, seg), 1e-3f);
     for (size_t i = 0; i < r.cars.size(); i++) {
         Color col = cols[i % 8];
+        if (i == 0 && r.specs[0].design == 8) col = Color{(unsigned char)sim::g_custom.r, (unsigned char)sim::g_custom.g, (unsigned char)sim::g_custom.b, 255};
         if (i > 0) {
             sim::Vec2 rel = r.cars[i].pos - camPos;
             // a rival within 9 m of the lens would fill the screen: don't draw it at all
@@ -823,7 +844,7 @@ static void drawTitle(const GameApp& app, int sel) {
     drawTextOutline("OVERDRIVE", GetScreenWidth() / 2 - 170, 60, 64, {255, 45, 130, 255});
     for (int i = 0; i < 8; i++) {
         const char* val = "";
-        if (i == 1) val = roster[app.settings.playerVehicle % (int)roster.size()].name.c_str();
+        if (i == 1) val = app.settings.playerVehicle == 8 ? "CUSTOM" : roster[app.settings.playerVehicle % (int)roster.size()].name.c_str();
         if (i == 2) val = sim::trackDefs()[app.settings.trackIndex % (int)sim::trackDefs().size()].name.c_str();
         if (i == 3) val = diffName(app.settings.aiDifficulty);
         if (i == 4) val = TextFormat("%d", app.settings.laps);
@@ -862,7 +883,7 @@ static void drawGarage(GameApp& app, int selected, float rotation) {
     DrawRectangle(x-22,y-20,360,430,{7,13,23,240});
     const char* labels[]={"ACCELERATION","TOP SPEED","STEERING","GRIP","SLIDE TENDENCY","BRAKING","DURABILITY","BOOST POWER"};
     float values[]={v.accel/20.f,v.maxSpeed/50.f,v.steerRate/3.5f,v.grip/13.f,1.f-v.driftGrip/4.f,v.brake/30.f,v.durability/180.f,v.boostAccel/20.f};
-    const auto& current=roster[app.settings.playerVehicle];
+    const auto& current=roster[app.settings.playerVehicle>=8?0:app.settings.playerVehicle];
     float comp[]={current.accel/20.f,current.maxSpeed/50.f,current.steerRate/3.5f,current.grip/13.f,1.f-current.driftGrip/4.f,current.brake/30.f,current.durability/180.f,current.boostAccel/20.f};
     for(int i=0;i<8;i++) {
         DrawText(labels[i],x,y+i*48,16,{160,180,200,255});
@@ -873,14 +894,120 @@ static void drawGarage(GameApp& app, int selected, float rotation) {
     DrawText(TextFormat("Gold: %s equipped",current.name.c_str()),x,y+390,14,GOLD);
     DrawText(TextFormat("%.0f km/h  |  %.0f HP  |  %.1fs boost",v.maxSpeed*3.6f,v.durability,v.boostTime),44,H-150,20,{150,170,190,255});
     DrawText(owned?(selected==app.settings.playerVehicle?"EQUIPPED":"ENTER / A: EQUIP"):TextFormat("ENTER / A: UNLOCK  %d CR",sim::vehicleUnlockCost(selected)),44,H-106,24,owned?WHITE:GOLD);
-    DrawText("LEFT / RIGHT: browse    ESC / B: back",44,H-58,20,{150,170,190,255});
+    DrawText("LEFT / RIGHT: browse    C / Y: CAR CREATOR    ESC / B: back",44,H-58,20,{150,170,190,255});
     DrawText("Bars: higher = stronger; SLIDE higher = slides more",44,H-84,14,{120,140,160,255});
     EndDrawing();
+}
+
+// ---- in-game car creator: pick a template, reshape it, paint it, spend a fixed stat budget ----
+static void ensureCustom(const GameApp& app) {
+    static bool loaded = false;
+    if (loaded) return;
+    loaded = true;
+    sim::g_custom = sim::loadCustom(app.settingsPath + ".custom");
+}
+static void applyTemplate(sim::CustomCar& c, int t) {
+    const CarParams& P = kCarP[t & 7];
+    c.base = t & 7; c.L = P.L; c.W = P.W; c.belt = P.belt; c.roof = P.roof; c.c0 = P.c0; c.c1 = P.c1;
+    c.nose = P.nose; c.tail = P.tail; c.yb = P.yb;
+    c.wing = (t == 1 || t == 3 || t == 4 || t == 7) ? 1 : 0; c.splitter = (t == 3 || t == 4 || t == 7) ? 1 : 0;
+    sim::clampCustom(c);
+}
+static const int kCreatorRows = 20;
+static void creatorAdjust(sim::CustomCar& c, int row, int d) {
+    auto stepf = [&](float& v, float st) { v += st * d; };
+    switch (row) {
+        case 0: applyTemplate(c, (c.base + 8 + d) % 8); return;
+        case 1: stepf(c.L, .1f); break;   case 2: stepf(c.W, .05f); break;
+        case 3: stepf(c.belt, .05f); break; case 4: stepf(c.roof, .05f); break;
+        case 5: stepf(c.c0, .03f); break;  case 6: stepf(c.c1, .03f); break;
+        case 7: stepf(c.nose, .05f); break; case 8: stepf(c.tail, .05f); break; case 9: stepf(c.yb, .03f); break;
+        case 10: c.wing = (c.wing + 3 + d) % 3; break; case 11: c.splitter = (c.splitter + 3 + d) % 3; break;
+        case 12: c.r = (c.r + 256 + 15 * d) % 256; break; case 13: c.g = (c.g + 256 + 15 * d) % 256; break; case 14: c.b = (c.b + 256 + 15 * d) % 256; break;
+        case 15: c.power += d; break; case 16: c.handling += d; break; case 17: c.grip += d; break; case 18: c.armor += d; break;
+        default: return;
+    }
+    // stat rows: refuse a rise that would exceed the budget instead of silently taking points elsewhere
+    if (row >= 15) {
+        int t = c.power + c.handling + c.grip + c.armor;
+        if (t > sim::kCustomBudget) { if (row == 15) c.power--; else if (row == 16) c.handling--; else if (row == 17) c.grip--; else c.armor--; }
+    }
+    sim::clampCustom(c);
+}
+static void drawCreator(GameApp& app, int row, float rot) {
+    const sim::CustomCar& c = sim::g_custom;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    BeginDrawing(); ClearBackground({10, 15, 26, 255});
+    DrawRectangleGradientV(0, 0, W, H, {16, 28, 46, 255}, {6, 9, 16, 255});
+    DrawRectangle(0, 0, W, 5, {255, 45, 130, 255});
+    DrawText("OVERDRIVE / CAR CREATOR", 44, 26, 28, {150, 170, 190, 255});
+    Camera3D gc{{8.5f, 4.2f, 8.5f}, {0, .8f, 0}, {0, 1, 0}, 40, CAMERA_PERSPECTIVE};
+    BeginMode3D(gc);
+    DrawCylinder({0, -.15f, 0}, 3.8f, 3.8f, .18f, 48, {30, 44, 59, 255});
+    DrawCylinderWires({0, -.04f, 0}, 3.9f, 3.9f, .05f, 48, {255, 45, 130, 255});
+    sim::Car car; car.heading = rot;
+    drawCar(car, sim::customSpec(c), Color{(unsigned char)c.r, (unsigned char)c.g, (unsigned char)c.b, 255});
+    EndMode3D();
+    static const char* names[kCreatorRows] = {"TEMPLATE", "LENGTH", "WIDTH", "BELT LINE", "ROOF HEIGHT", "CABIN START", "CABIN END", "NOSE HEIGHT",
+        "TAIL HEIGHT", "RIDE HEIGHT", "REAR WING", "FRONT SPLITTER", "PAINT RED", "PAINT GREEN", "PAINT BLUE", "POWER", "HANDLING", "GRIP", "ARMOR", "SAVE AND EQUIP"};
+    static const char* tmpl[8] = {"STANDARD", "SPRINTER", "HAULER", "AFTERBURN", "SIDEWINDER", "VOLT", "RIDGEBACK", "PHANTOM"};
+    static const char* lv[3] = {"NONE", "LOW", "HIGH"};
+    int x = W - 470, y0 = 70;
+    DrawRectangle(x - 20, y0 - 14, 456, kCreatorRows * 30 + 28, {7, 13, 23, 240});
+    for (int i = 0; i < kCreatorRows; i++) {
+        int y = y0 + i * 30;
+        bool sel = i == row;
+        if (sel) DrawRectangle(x - 14, y - 4, 444, 28, {40, 20, 40, 255});
+        Color tc = sel ? Color{255, 255, 255, 255} : Color{160, 180, 200, 255};
+        DrawText(names[i], x, y, 18, tc);
+        const char* v = "";
+        switch (i) {
+            case 0: v = tmpl[c.base & 7]; break;
+            case 1: v = TextFormat("%.1f m", c.L); break; case 2: v = TextFormat("%.2f m", c.W); break;
+            case 3: v = TextFormat("%.2f", c.belt); break; case 4: v = TextFormat("%.2f", c.roof); break;
+            case 5: v = TextFormat("%.2f", c.c0); break; case 6: v = TextFormat("%.2f", c.c1); break;
+            case 7: v = TextFormat("%.2f", c.nose); break; case 8: v = TextFormat("%.2f", c.tail); break; case 9: v = TextFormat("%.2f", c.yb); break;
+            case 10: v = lv[c.wing]; break; case 11: v = lv[c.splitter]; break;
+            case 12: v = TextFormat("%d", c.r); break; case 13: v = TextFormat("%d", c.g); break; case 14: v = TextFormat("%d", c.b); break;
+            case 15: v = TextFormat("%d / 6", c.power); break; case 16: v = TextFormat("%d / 6", c.handling); break;
+            case 17: v = TextFormat("%d / 6", c.grip); break; case 18: v = TextFormat("%d / 6", c.armor); break;
+            case 19: v = app.settings.playerVehicle == 8 ? "EQUIPPED" : "ENTER"; break;
+        }
+        DrawText(v, x + 230, y, 18, i >= 15 && i <= 18 ? GOLD : tc);
+    }
+    int used = c.power + c.handling + c.grip + c.armor;
+    sim::CarSpec sp = sim::customSpec(c);
+    DrawText(TextFormat("STAT POINTS  %d / %d", used, sim::kCustomBudget), 44, H - 190, 22, GOLD);
+    DrawText(TextFormat("%.0f km/h  |  %.0f HP  |  accel %.1f", sp.maxSpeed * 3.6f, sp.durability, sp.accel), 44, H - 150, 20, {150, 170, 190, 255});
+    DrawText("Same budget rules as every car: points trade power, handling, grip and armor.", 44, H - 118, 16, {120, 140, 160, 255});
+    DrawText("UP / DOWN: row    LEFT / RIGHT: change    ENTER: save    ESC: back", 44, H - 58, 20, {150, 170, 190, 255});
+    EndDrawing();
+}
+static void creatorMenu(GameApp& app) {
+    ensureCustom(app);
+    int row = 0;
+    while (!WindowShouldClose()) {
+        if (menuPressed(KEY_ESCAPE, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) break;
+        if (menuPressed(KEY_UP, GAMEPAD_BUTTON_LEFT_FACE_UP)) row = (row + kCreatorRows - 1) % kCreatorRows;
+        if (menuPressed(KEY_DOWN, GAMEPAD_BUTTON_LEFT_FACE_DOWN)) row = (row + 1) % kCreatorRows;
+        int d = 0;
+        if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT) || IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) d = -1;
+        if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT) || IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) d = 1;
+        if (d) creatorAdjust(sim::g_custom, row, d);
+        if (menuPressed(KEY_ENTER, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) && row == 19) {
+            sim::clampCustom(sim::g_custom);
+            sim::saveCustom(sim::g_custom, app.settingsPath + ".custom");
+            app.settings.playerVehicle = 8;
+            sim::saveSettings(app.settings, app.settingsPath);
+        }
+        drawCreator(app, row, (float)GetTime() * .28f);
+    }
 }
 static void garageMenu(GameApp& app) {
     int selected=app.settings.playerVehicle;
     while(!WindowShouldClose()) {
         if(menuPressed(KEY_ESCAPE,GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) break;
+        if(IsKeyPressed(KEY_C) || IsGamepadButtonPressed(0,GAMEPAD_BUTTON_RIGHT_FACE_UP)) { creatorMenu(app); selected=app.settings.playerVehicle>=8?0:app.settings.playerVehicle; }
         if(menuPressed(KEY_LEFT,GAMEPAD_BUTTON_LEFT_FACE_LEFT)) selected=(selected+7)%8;
         if(menuPressed(KEY_RIGHT,GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) selected=(selected+1)%8;
         if(menuPressed(KEY_ENTER,GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
@@ -897,7 +1024,8 @@ static void garageMenu(GameApp& app) {
 
 static bool titleMenu(GameApp& app) {
     int sel = 0;
-    if(app.settings.playerVehicle<0 || app.settings.playerVehicle>=8 || !(app.settings.unlocked&(1u<<app.settings.playerVehicle))) app.settings.playerVehicle=0;
+    if(app.settings.playerVehicle<0 || app.settings.playerVehicle>8 || (app.settings.playerVehicle<8 && !(app.settings.unlocked&(1u<<app.settings.playerVehicle)))) app.settings.playerVehicle=0;
+    ensureCustom(app);
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     while (!WindowShouldClose()) {
         if (menuPressed(KEY_UP,GAMEPAD_BUTTON_LEFT_FACE_UP)) sel = (sel + 7) % 8;
@@ -1036,6 +1164,10 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
     SetConfigFlags(FLAG_WINDOW_HIDDEN | FLAG_MSAA_4X_HINT);
     InitWindow(1366, 768, "overdrive-demo");
     SetTargetFPS(600);
+    if (getenv("OD_DEMO_CUSTOM")) {   // evidence only: in-memory custom car, nothing saved
+        applyTemplate(sim::g_custom, 3); sim::g_custom.r = 40; sim::g_custom.g = 120; sim::g_custom.b = 235;
+        sim::g_custom.wing = 2; sim::g_custom.splitter = 1; sim::clampCustom(sim::g_custom); app.settings.playerVehicle = 8;
+    }
     sim::Race race;
     race.init(3, app.settings.aiDifficulty, app.settings.playerVehicle, app.settings.trackIndex);
     Camera3D cam{};
@@ -1155,6 +1287,17 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
     for(int v=0;v<8;v++) {
         drawGarage(app,v,.65f);
         TakeScreenshot((prefix+"-garage-"+std::to_string(v)+".png").c_str());
+    }
+    {   // creator evidence (in-memory only; never writes the user's custom car file)
+        const int tp[3] = {3, 2, 5};
+        for (int k = 0; k < 3; k++) {
+            applyTemplate(sim::g_custom, tp[k]);
+            if (k == 0) { sim::g_custom.L = 5.0f; sim::g_custom.W = 1.9f; sim::g_custom.wing = 2; sim::g_custom.splitter = 2; sim::g_custom.r = 40; sim::g_custom.g = 120; sim::g_custom.b = 235; sim::g_custom.power = 5; sim::g_custom.armor = 1; }
+            if (k == 1) { sim::g_custom.roof = 1.5f; sim::g_custom.r = 235; sim::g_custom.g = 190; sim::g_custom.b = 40; sim::g_custom.armor = 5; sim::g_custom.power = 2; }
+            sim::clampCustom(sim::g_custom);
+            drawCreator(app, k == 0 ? 1 : 10, .9f);
+            TakeScreenshot((prefix + "-creator-" + std::to_string(k) + ".png").c_str());
+        }
     }
     // simulate a finished race for the results frame
     for (int f = 0; f < 60 * 400 && !race.cars[0].finished; f++) {

@@ -5,6 +5,7 @@
 #include <algorithm>
 
 namespace sim {
+CustomCar g_custom;
 
 float len(Vec2 a) { return std::sqrt(dot(a, a)); }
 static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -111,7 +112,7 @@ void Race::init(int laps, int aiDifficulty, int playerVehicle, int trackIdx) {
     specs = defaultRoster(); // full eight-car grid: player + seven AI, same physical rules
     // player drives the chosen vehicle; AI take the other specs, same physical limits
     std::vector<CarSpec> roster = defaultRoster();
-    specs[0] = roster[playerVehicle % (int)roster.size()];
+    specs[0] = (playerVehicle == 8) ? customSpec(g_custom) : roster[playerVehicle % (int)roster.size()];
     for (size_t i = 1; i < specs.size(); i++) {
         specs[i] = roster[(playerVehicle + i) % roster.size()];
         aiTune[i] = difficultyTune(aiDifficulty);
@@ -648,3 +649,54 @@ CarInput mergeInputs(CarInput a, CarInput b) {
 }
 
 } // namespace sim
+
+namespace sim {
+static float cl(float v, float a, float b) { return v < a ? a : v > b ? b : v; }
+void clampCustom(CustomCar& c) {
+    c.base = c.base < 0 ? 0 : c.base > 7 ? 7 : c.base;
+    c.L = cl(c.L, 3.2f, 5.2f); c.W = cl(c.W, 1.6f, 2.6f); c.belt = cl(c.belt, .5f, 1.1f);
+    c.roof = cl(c.roof, c.belt + .3f, 1.9f); c.c0 = cl(c.c0, .15f, .5f); c.c1 = cl(c.c1, c.c0 + .15f, .9f);
+    c.nose = cl(c.nose, .25f, 1.0f); c.tail = cl(c.tail, .4f, 1.0f); c.yb = cl(c.yb, .2f, .6f);
+    c.wing = c.wing < 0 ? 0 : c.wing > 2 ? 2 : c.wing; c.splitter = c.splitter < 0 ? 0 : c.splitter > 2 ? 2 : c.splitter;
+    c.r = (int)cl((float)c.r, 0, 255); c.g = (int)cl((float)c.g, 0, 255); c.b = (int)cl((float)c.b, 0, 255);
+    int* p[4] = {&c.power, &c.handling, &c.grip, &c.armor};
+    for (int* q : p) *q = *q < 0 ? 0 : *q > 6 ? 6 : *q;
+    int total = 0; for (int* q : p) total += *q;
+    for (int i = 3; total > kCustomBudget; i = (i + 3) % 4) if (*p[i] > 0) { (*p[i])--; total--; }
+}
+CarSpec customSpec(const CustomCar& in) {
+    CustomCar c = in; clampCustom(c);
+    CarSpec s; s.name = "CUSTOM"; s.design = 8;
+    s.accel = 10.f + c.power * 1.3f;  s.maxSpeed = 37.f + c.power * 1.7f;
+    s.steerRate = 2.0f + c.handling * 0.22f; s.brake = 20.f + c.handling * 1.2f;
+    s.grip = 7.f + c.grip * 0.8f; s.driftGrip = 3.2f - c.grip * 0.25f;
+    s.durability = 70.f + c.armor * 20.f; s.mass = 0.8f + c.armor * 0.1f;
+    s.boostAccel = 12.f; s.boostTime = 2.4f;
+    s.radius = s.mass > 1.5f ? 1.3f : 1.1f;
+    return s;
+}
+bool saveCustom(const CustomCar& c, const std::string& path) {
+    std::ofstream f(path, std::ios::trunc); if (!f) return false;
+    f << "base " << c.base << "\nL " << c.L << "\nW " << c.W << "\nbelt " << c.belt << "\nroof " << c.roof
+      << "\nc0 " << c.c0 << "\nc1 " << c.c1 << "\nnose " << c.nose << "\ntail " << c.tail << "\nyb " << c.yb
+      << "\nwing " << c.wing << "\nsplitter " << c.splitter << "\nr " << c.r << "\ng " << c.g << "\nb " << c.b
+      << "\npower " << c.power << "\nhandling " << c.handling << "\ngrip " << c.grip << "\narmor " << c.armor << "\n";
+    return (bool)f;
+}
+CustomCar loadCustom(const std::string& path) {
+    CustomCar c; std::ifstream f(path); std::string k, v;
+    while (f >> k >> v) {
+        try {
+            if (k == "base") c.base = std::stoi(v); else if (k == "L") c.L = std::stof(v); else if (k == "W") c.W = std::stof(v);
+            else if (k == "belt") c.belt = std::stof(v); else if (k == "roof") c.roof = std::stof(v);
+            else if (k == "c0") c.c0 = std::stof(v); else if (k == "c1") c.c1 = std::stof(v);
+            else if (k == "nose") c.nose = std::stof(v); else if (k == "tail") c.tail = std::stof(v); else if (k == "yb") c.yb = std::stof(v);
+            else if (k == "wing") c.wing = std::stoi(v); else if (k == "splitter") c.splitter = std::stoi(v);
+            else if (k == "r") c.r = std::stoi(v); else if (k == "g") c.g = std::stoi(v); else if (k == "b") c.b = std::stoi(v);
+            else if (k == "power") c.power = std::stoi(v); else if (k == "handling") c.handling = std::stoi(v);
+            else if (k == "grip") c.grip = std::stoi(v); else if (k == "armor") c.armor = std::stoi(v);
+        } catch (...) {}
+    }
+    clampCustom(c); return c;
+}
+}

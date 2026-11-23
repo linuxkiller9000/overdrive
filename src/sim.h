@@ -179,6 +179,21 @@ struct Settings {
     unsigned unlocked = 7; // first three vehicles owned, the rest earned offline
 };
 
+// In-game car creator: template-based parametric body + a fixed stat budget (no free power).
+struct CustomCar {
+    int base = 0;                         // template design 0..7 the shape started from
+    float L = 4.4f, W = 2.1f, belt = .7f, roof = 1.2f, c0 = .3f, c1 = .62f, nose = .45f, tail = .6f, yb = .28f;
+    int wing = 0, splitter = 0;           // 0 none, 1 low, 2 high / 0 none, 1 lip, 2 wide
+    int r = 230, g = 60, b = 60;          // paint
+    int power = 3, handling = 3, grip = 3, armor = 3; // each 0..6, total capped at kCustomBudget
+};
+constexpr int kCustomBudget = 12;
+void clampCustom(CustomCar& c);           // clamps ranges, trims points down to the budget
+CarSpec customSpec(const CustomCar& c);   // design 8; stats derived only from the budget
+bool saveCustom(const CustomCar& c, const std::string& path);
+CustomCar loadCustom(const std::string& path);
+extern CustomCar g_custom;                // the equipped custom car (playerVehicle == 8)
+
 // Records update: best lap any finish; best RACE time only counts on a win.
 void updateRecords(Settings& s, const Car& p, int track);
 

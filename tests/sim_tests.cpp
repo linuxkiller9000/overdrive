@@ -156,6 +156,23 @@ int runTests() {
         float dvHauler = sim::len(r7.cars[hi].vel - vh);
         CHECK(dvPlayer > dvHauler, "heavier vehicle wins the shove");
     }
+    // Car creator: stat budget is capped, spec is derived only from budget, file round-trips, race uses it.
+    {
+        sim::CustomCar c; c.power = 6; c.handling = 6; c.grip = 6; c.armor = 6; sim::clampCustom(c);
+        CHECK(c.power + c.handling + c.grip + c.armor <= sim::kCustomBudget, "custom stat budget capped");
+        sim::CustomCar a; a.power = 6; a.handling = 0; a.grip = 3; a.armor = 3;
+        sim::CustomCar b; b.power = 3; b.handling = 3; b.grip = 3; b.armor = 3;
+        CHECK(sim::customSpec(a).maxSpeed > sim::customSpec(b).maxSpeed && sim::customSpec(a).steerRate < sim::customSpec(b).steerRate, "custom stats trade off");
+        CHECK(sim::customSpec(a).maxSpeed <= 48.f && sim::customSpec(a).accel <= 20.f, "custom car within roster limits");
+        a.L = 9.f; a.roof = 0.f; sim::clampCustom(a);
+        CHECK(a.L <= 5.2f && a.roof >= a.belt + .3f, "custom shape clamped");
+        std::string p = "/tmp/overdrive_custom_test.cfg";
+        sim::saveCustom(b, p); b.r = 1; sim::CustomCar l = sim::loadCustom(p);
+        CHECK(l.power == 3 && l.L == b.L, "custom car round-trips");
+        sim::g_custom = l; sim::Race r; r.init(1, 1, 8, 0);
+        CHECK(r.specs[0].design == 8 && r.specs[0].name == "CUSTOM" && r.specs.size() == 8, "race uses custom car for player");
+        sim::CustomCar bad = sim::loadCustom("/nonexistent/x"); CHECK(bad.power >= 0, "missing custom file gives defaults");
+    }
     // Eight vehicles: real gameplay parameters, race completion and durable saves.
     {
         auto roster=sim::defaultRoster(); CHECK(roster.size()==8,"eight vehicle roster");
@@ -324,7 +341,7 @@ int runTests() {
         CHECK(ra.finishedCount>=6, "AI field finishes with combat on");
         std::printf("combat race: fired=%d finished=%d\n", fired, ra.finishedCount);
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (15 groups)\n");
+    if (failures == 0) std::printf("ALL TESTS PASSED (16 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }
