@@ -10,7 +10,7 @@
 namespace {
 
 struct TrackMeshes {
-    Model road, edgeL, edgeR, centerLine, curbL, curbR;
+    Model road{}, edgeL{}, edgeR{}, centerLine{}, curbL{}, curbR{}, windows{}, sidewalkL{}, sidewalkR{};
     std::vector<Vector3> buildings;
     std::vector<Color> buildingColors;
     Vector3 boundsCenter{0, 0, 0};
@@ -56,6 +56,53 @@ Model ribbonMesh(const sim::Track& t, float inner, float outer, Color c1, Color 
     return LoadModelFromMesh(m);
 }
 
+// One batched vertex-colored mesh of emissive window bands for all buildings.
+Model windowMesh(const std::vector<Vector3>& buildings) {
+    std::vector<Vector3> verts;
+    std::vector<Color> colors;
+    std::vector<unsigned short> idx;
+    unsigned st = 777;
+    auto rnd = [&]() { st ^= st << 13; st ^= st >> 17; st ^= st << 5; return (st & 0xFFFF) / 65535.f; };
+    unsigned short base = 0;
+    for (auto& b : buildings) {
+        float halfW = 5.f, top = b.y * 2.f;
+        Color warm{255, 190, 90, 255}, cool{110, 200, 255, 255};
+        for (int face = 0; face < 4; face++) {
+            for (float y = 3.2f; y < top - 2.f; y += 4.f) {
+                if (rnd() < 0.45f) continue; // lights out
+                Color wc = (rnd() < 0.5f) ? warm : cool;
+                wc.r = (unsigned char)(wc.r * (0.5f + 0.5f * rnd()));
+                float o = halfW + 0.12f, w = 3.2f, h = 1.1f;
+                Vector3 v0, v1, v2, v3;
+                if (face == 0)      { v0={b.x+o,y-h,b.z-w}; v1={b.x+o,y-h,b.z+w}; v2={b.x+o,y+h,b.z+w}; v3={b.x+o,y+h,b.z-w}; }
+                else if (face == 1) { v0={b.x-o,y-h,b.z+w}; v1={b.x-o,y-h,b.z-w}; v2={b.x-o,y+h,b.z-w}; v3={b.x-o,y+h,b.z+w}; }
+                else if (face == 2) { v0={b.x-w,y-h,b.z+o}; v1={b.x+w,y-h,b.z+o}; v2={b.x+w,y+h,b.z+o}; v3={b.x-w,y+h,b.z+o}; }
+                else                { v0={b.x+w,y-h,b.z-o}; v1={b.x-w,y-h,b.z-o}; v2={b.x-w,y+h,b.z-o}; v3={b.x+w,y+h,b.z-o}; }
+                verts.push_back(v0); verts.push_back(v1); verts.push_back(v2); verts.push_back(v3);
+                colors.push_back(wc); colors.push_back(wc); colors.push_back(wc); colors.push_back(wc);
+                idx.push_back(base); idx.push_back(base+1); idx.push_back(base+2);
+                idx.push_back(base); idx.push_back(base+2); idx.push_back(base+3);
+                base += 4;
+                if (base > 65500) goto done;
+            }
+        }
+    }
+done: ;
+    Mesh m{};
+    m.vertexCount = (int)verts.size();
+    m.triangleCount = (int)idx.size() / 3;
+    m.vertices = (float*)MemAlloc(verts.size() * 3 * sizeof(float));
+    m.colors = (unsigned char*)MemAlloc(colors.size() * 4);
+    m.indices = (unsigned short*)MemAlloc(idx.size() * sizeof(unsigned short));
+    for (size_t i = 0; i < verts.size(); i++) {
+        m.vertices[3*i] = verts[i].x; m.vertices[3*i+1] = verts[i].y; m.vertices[3*i+2] = verts[i].z;
+        m.colors[4*i] = colors[i].r; m.colors[4*i+1] = colors[i].g; m.colors[4*i+2] = colors[i].b; m.colors[4*i+3] = 255;
+    }
+    for (size_t i = 0; i < idx.size(); i++) m.indices[i] = idx[i];
+    UploadMesh(&m, false);
+    return LoadModelFromMesh(m);
+}
+
 TrackMeshes buildTrack(const sim::Track& t, int quality) {
     TrackMeshes tm;
     Color road1{38, 38, 46, 255}, road2{34, 34, 40, 255};
@@ -64,6 +111,8 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
     tm.edgeL = ribbonMesh(t, t.halfWidth - 0.4f, t.halfWidth, neonA, neonA);
     tm.edgeR = ribbonMesh(t, -t.halfWidth, -t.halfWidth + 0.4f, neonB, neonB);
     tm.centerLine = ribbonMesh(t, -0.15f, 0.15f, {80, 80, 95, 255}, {80, 80, 95, 255}, true);
+    tm.sidewalkL = ribbonMesh(t, t.halfWidth + 1.5f, t.halfWidth + 10.f, {44, 49, 65, 255}, {40, 44, 59, 255});
+    tm.sidewalkR = ribbonMesh(t, -t.halfWidth - 10.f, -t.halfWidth - 1.5f, {44, 49, 65, 255}, {40, 44, 59, 255});
     Color curbA{200, 40, 60, 255}, curbB{225, 225, 230, 255};
     tm.curbL = ribbonMesh(t, t.halfWidth + 0.05f, t.halfWidth + 1.5f, curbA, curbB);
     tm.curbR = ribbonMesh(t, -t.halfWidth - 1.5f, -t.halfWidth - 0.05f, curbA, curbB);
@@ -77,12 +126,12 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
                 sim::Vec2 c = t.center[i];
                 sim::Vec2 d = t.dirAt(t.cum[i]);
                 sim::Vec2 n{-d.y, d.x};
-                float off = t.halfWidth + 95.f + rnd() * 55.f;
+                float off = t.halfWidth + 38.f + rnd() * 60.f;
                 float x = c.x + n.x * off * side, z = c.y + n.y * off * side;
                 // keep the camera corridor clear: reject if near ANY track point
                 bool tooClose = false;
                 for (auto& tp : t.center)
-                    if (sim::len(sim::Vec2{x, z} - tp) < t.halfWidth + 88.f) { tooClose = true; break; }
+                    if (sim::len(sim::Vec2{x, z} - tp) < t.halfWidth + 32.f) { tooClose = true; break; }
                 if (tooClose) continue;
                 float h = 12.f + rnd() * 42.f;
                 tm.buildings.push_back({x, h * 0.5f, z});
@@ -91,39 +140,56 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
                 tm.buildingColors.push_back(bc);
             }
         }
+        tm.windows = windowMesh(tm.buildings);
     }
     return tm;
 }
 
+// Vertex-lit unit boxes: stable directional face shading, no shader dependency.
+void litBox(Vector3 p, Vector3 size, Color color) {
+    const Vector3 v[8]={{-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
+                        {-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1}};
+    const int faces[6][4]={{4,5,6,7},{1,0,3,2},{0,4,7,3},{5,1,2,6},{3,7,6,2},{0,1,5,4}};
+    const float light[6]={0.72f,0.60f,0.82f,0.52f,1.f,0.35f};
+    rlBegin(RL_QUADS);
+    for (int f=0;f<6;f++) {
+        rlColor4ub((unsigned char)(color.r*light[f]),(unsigned char)(color.g*light[f]),(unsigned char)(color.b*light[f]),color.a);
+        for (int i=0;i<4;i++) { Vector3 q=v[faces[f][i]];
+            rlVertex3f(p.x+q.x*size.x*.5f,p.y+q.y*size.y*.5f,p.z+q.z*size.z*.5f); }
+    }
+    rlEnd();
+}
+
 void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
-    Matrix m = MatrixMultiply(MatrixRotateY(-c.heading), MatrixTranslate(c.pos.x, 0, c.pos.y));
+    Matrix m = MatrixMultiply(MatrixRotateY(PI * 0.5f - c.heading), MatrixTranslate(c.pos.x, 0, c.pos.y));
     rlPushMatrix();
     rlMultMatrixf(MatrixToFloat(m));
     Color dark = ColorBrightness(body, -0.4f);
-    Color glass{15, 25, 40, 255};
-    Color accent = (sp.name == "SPRINTER") ? Color{255, 200, 40, 255} : (sp.name == "HAULER") ? Color{230, 230, 240, 255} : Color{0, 229, 220, 255};
+    Color glass{35, 65, 90, body.a};
+    Color accent = (sp.name == "SPRINTER") ? Color{255, 200, 40, body.a} : (sp.name == "HAULER") ? Color{230, 230, 240, 255} : Color{0, 229, 220, 255};
+    accent.a = body.a;
     if (sp.name == "HAULER") {
-        DrawCubeV({0, 0.75f, 0}, {2.6f, 1.1f, 4.6f}, body);
-        DrawCubeV({0, 1.45f, -0.4f}, {2.2f, 0.6f, 2.6f}, glass);
-        DrawCubeV({0, 0.75f, -2.35f}, {2.6f, 0.5f, 0.2f}, accent);
+        litBox({0, 0.75f, 0}, {2.6f, 1.1f, 4.6f}, body);
+        litBox({0, 1.45f, -0.4f}, {2.2f, 0.6f, 2.6f}, glass);
+        litBox({0, 0.75f, -2.35f}, {2.6f, 0.5f, 0.2f}, accent);
     } else {
         float nose = (sp.name == "SPRINTER") ? 0.9f : 0.7f;
-        DrawCubeV({0, 0.35f, 1.55f}, {1.9f, 0.35f, 1.3f}, dark);
-        DrawCubeV({0, 0.5f, 0}, {2.1f, 0.55f, 3.2f}, body);
-        DrawCubeV({0, 0.95f, -0.25f}, {1.5f, 0.45f, 1.6f}, glass);
-        DrawCubeV({0, 0.85f, -1.85f}, {2.0f, 0.08f, 0.5f}, accent);
-        DrawCubeV({-0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
-        DrawCubeV({0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
-        DrawCubeV({0, 0.42f, -1.65f}, {1.8f, 0.18f, 0.1f}, {255, 30, 60, 255});
-        DrawCubeV({0, 0.28f, nose + 1.6f}, {1.7f, 0.12f, 0.3f}, accent);
+        litBox({0, 0.35f, 1.55f}, {1.9f, 0.35f, 1.3f}, dark);
+        litBox({0, 0.5f, 0}, {2.1f, 0.55f, 3.2f}, body);
+        litBox({0, 0.95f, -0.25f}, {1.5f, 0.45f, 1.6f}, glass);
+        litBox({0, 0.85f, -1.85f}, {2.0f, 0.08f, 0.5f}, accent);
+        litBox({-0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
+        litBox({0.85f, 0.65f, -1.8f}, {0.12f, 0.35f, 0.3f}, dark);
+        litBox({0, 0.42f, -1.65f}, {1.8f, 0.18f, 0.1f}, {255, 30, 60, body.a});
+        litBox({0, 0.28f, nose + 1.6f}, {1.7f, 0.12f, 0.3f}, accent);
     }
     float wr = sp.radius * 0.42f;
     for (int sx = -1; sx <= 1; sx += 2)
         for (int sz = -1; sz <= 1; sz += 2)
-            DrawCylinder({sx * 1.05f, wr, sz * 1.4f}, wr, wr, 0.35f, 8, {16, 16, 20, 255});
+            DrawCylinderEx({sx * 1.0f, wr, sz * 1.4f}, {sx * 1.3f, wr, sz * 1.4f}, wr, wr, 10, {22, 24, 30, body.a});
     if (c.boostLeft > 0.f) {
-        DrawCubeV({0, 0.45f, -2.6f}, {1.4f, 0.3f, 0.9f}, {255, 200, 40, 255});
-        DrawCubeV({0, 0.45f, -3.2f}, {0.9f, 0.2f, 0.7f}, {255, 120, 20, 200});
+        litBox({0, 0.45f, -2.6f}, {1.4f, 0.3f, 0.9f}, {255, 200, 40, body.a});
+        litBox({0, 0.45f, -3.2f}, {0.9f, 0.2f, 0.7f}, {255, 120, 20, body.a});
     }
     rlPopMatrix();
 }
@@ -243,8 +309,11 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     DrawModel(tm.edgeL, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.edgeR, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.centerLine, {0, 0.03f, 0}, 1.f, WHITE);
+    DrawModel(tm.sidewalkL, {0, -0.01f, 0}, 1.f, WHITE);
+    DrawModel(tm.sidewalkR, {0, -0.01f, 0}, 1.f, WHITE);
     DrawModel(tm.curbL, {0, 0.04f, 0}, 1.f, WHITE);
     DrawModel(tm.curbR, {0, 0.04f, 0}, 1.f, WHITE);
+    if (tm.windows.meshCount > 0) { rlDisableBackfaceCulling(); DrawModel(tm.windows, {0, 0, 0}, 1.f, WHITE); rlEnableBackfaceCulling(); }
     Color fog{16, 12, 40, 255};
     for (size_t i = 0; i < tm.buildings.size(); i++) {
         Vector3 b = tm.buildings[i];
@@ -257,6 +326,37 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         DrawCubeV({b.x, b.y * 2 + 0.3f, b.z}, {10.4f, 0.35f, 10.4f}, ColorLerp(fog, trim, fade));
         if (b.y > 22.f)
             DrawCylinder({b.x, b.y * 2 + 5.f, b.z}, 0.25f, 0.08f, 6.f, 6, ColorBrightness(bc, 0.5f));
+    }
+    // Street furniture follows the road tangent, outside the drivable corridor.
+    for (size_t k=0;k<r.track.center.size();k+=12) {
+        sim::Vec2 c=r.track.center[k], d=r.track.dirAt(r.track.cum[k]);
+        sim::Vec2 n{-d.y,d.x};
+        for (int side=-1;side<=1;side+=2) {
+            Vector3 b{c.x+n.x*(r.track.halfWidth+7.f)*side,0,c.y+n.y*(r.track.halfWidth+7.f)*side};
+            litBox({b.x,3.8f,b.z},{.28f,7.6f,.28f},{80,90,115,255});
+            litBox({b.x-n.x*side*1.5f,7.6f,b.z-n.y*side*1.5f},{3.5f,.22f,1.f},{130,145,170,255});
+            litBox({b.x-n.x*side*2.f,7.42f,b.z-n.y*side*2.f},{1.6f,.10f,.7f},{255,221,154,255});
+            // kiosk and illuminated advertising slabs alternate along each district
+            if (k%24==0) {
+                Vector3 a{b.x+n.x*side*4.f,0,b.z+n.y*side*4.f};
+                litBox({a.x,1.4f,a.z},{3.f,2.8f,2.f},{29,42,61,255});
+                litBox({a.x,2.9f,a.z},{3.4f,.2f,2.4f},{0,180,200,255});
+            }
+        }
+    }
+    // Three identifiable gateway arches provide district rhythm and navigation cues.
+    for (int district=1;district<=3;district++) {
+        float at=r.track.total*district*.25f;
+        sim::Vec2 c=r.track.pointAt(at), d=r.track.dirAt(at), n{-d.y,d.x};
+        rlPushMatrix(); rlTranslatef(c.x,0,c.y); rlRotatef(-atan2f(d.y,d.x)*RAD2DEG,0,1,0);
+        Color ac=district==1?Color{0,210,225,255}:district==2?Color{245,60,130,255}:Color{255,190,65,255};
+        float w=r.track.halfWidth+3.f;
+        litBox({0,4.5f,-w},{1.1f,9.f,1.1f},{45,55,80,255});
+        litBox({0,4.5f,w},{1.1f,9.f,1.1f},{45,55,80,255});
+        litBox({0,9.2f,0},{1.4f,.7f,w*2+2},{30,39,59,255});
+        litBox({-.72f,9.2f,0},{.08f,.32f,w*2+2},ac);
+        for(int dash=0;dash<district;dash++) litBox({-.8f,9.25f,(dash-(district-1)*.5f)*2.f},{.08f,.9f,.8f},{240,245,255,255});
+        rlPopMatrix();
     }
     // landmark spire outside the track bounds: stacked needle skyline beacon
     {
@@ -314,16 +414,20 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         if (i > 0) {
             sim::Vec2 rel = r.cars[i].pos - camPos;
             float along = sim::dot(rel, seg) / segLen2;
-            if (along > 0.25f && along < 0.95f) {
+            if (along > -0.1f && along < 1.0f) {
                 sim::Vec2 closest{camPos.x + seg.x * along, camPos.y + seg.y * along};
                 float d = sim::len(r.cars[i].pos - closest);
-                if (d < 3.0f) col.a = (unsigned char)(90 + 165 * (d / 3.0f));
+                if (d < 3.0f) col.a = 42;
             }
         }
         if (col.a < 255) {
+            rlDrawRenderBatchActive();
+            rlDisableDepthMask();
             BeginBlendMode(BLEND_ALPHA);
             drawCar(r.cars[i], r.specs[i], col);
             EndBlendMode();
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
         } else {
             drawCar(r.cars[i], r.specs[i], col);
         }
@@ -485,7 +589,9 @@ int runGame(GameApp& app) {
             }
             if (race.cars[0].finished && action == 0) resultsScreen(app, race);
             UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
+        UnloadModel(tm.sidewalkL); UnloadModel(tm.sidewalkR);
         UnloadModel(tm.curbL); UnloadModel(tm.curbR);
+        if (tm.windows.meshCount > 0) UnloadModel(tm.windows);
             if (action == 1) continue; // restart race
             quitToTitle = true;
         }
@@ -497,7 +603,7 @@ int runGame(GameApp& app) {
 
 int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int shotEvery, int shotCount) {
     SetConfigFlags(FLAG_WINDOW_HIDDEN | FLAG_MSAA_4X_HINT);
-    InitWindow(1280, 720, "overdrive-demo");
+    InitWindow(1366, 768, "overdrive-demo");
     SetTargetFPS(600);
     sim::Race race;
     race.init(3);

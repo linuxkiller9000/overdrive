@@ -53,3 +53,28 @@
   Xvfb (probe-verified), so physical key polling is covered by unit tests up to
   the GLFW boundary and still needs on-hardware verification by the user.
 - 9/9 headless test groups pass.
+
+## Visual district milestone (continuing, not release-complete)
+
+- Procedural warm/cool facade lights in one static vertex-color mesh.
+- Sidewalk ribbons, streetlights, kiosks and three district gateway arches.
+- City buildings placed 32m+ clear of every track sample while bringing facades
+  nearer than the previous sparse skyline.
+- Directional face shading on vehicle geometry, without a shader requirement.
+- Corrected car local-forward basis (previous render faced 90 degrees sideways)
+  and wheel cylinder axes.
+- Rival obstruction fades now cover every component, use alpha=42/255 near the
+  camera sightline, and disable depth writes during the transparent draw.
+  Verified in actual 1366x768 corner-frame pixels: white player is visible
+  through the trailing teal rival. No screenshot visibility gate is used.
+- Linux and Windows targets compile after the changes. Linux 11-group sim suite
+  passes. Scripted full-race rendering under Xvfb completes all five evidence
+  frames. Windows runtime, N5010 FPS and native Wayland remain unverified.
+- Art is still preliminary: car body geometry, typography/HUD, facade variation,
+  lighting/materials and signage need further work. This is not the full game.
+
+Expanded user release brief accepted Nov 23: eight distinctive vehicles and
+functional garage, four distinct track layouts/environments, eight combat
+powerups, six modes, fair multi-opponent AI, two-player split-screen, actual
+controls settings, configurable original audio, offline progression and full
+source/Linux/Windows release packaging. No feature is silently dropped.
