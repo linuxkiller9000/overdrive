@@ -13,3 +13,5 @@ int runGame(GameApp& app);                       // interactive
 int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int shotEvery, int shotCount);
 int runUITest(GameApp& app);
 int runUIScreens(GameApp& app, const std::string& prefix);                       // rendered UI evidence using scripted race state
+
+int runFxShots(GameApp& app, const std::string& prefix, int track);     // staged combat-effect frames

@@ -33,6 +33,7 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--uiscreens") && i + 1 < argc) return runUIScreens(app, argv[++i]);
         if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) return runScreenshots(app, argv[++i], 240, 120, 4);
         if (!std::strcmp(argv[i], "--track") && i + 1 < argc) app.settings.trackIndex = std::atoi(argv[++i]);
+        if (!std::strcmp(argv[i], "--fxshots") && i + 1 < argc) return runFxShots(app, argv[++i], app.settings.trackIndex);
         if (!std::strcmp(argv[i], "--low")) app.settings.quality = 0;
         if (!std::strcmp(argv[i], "--fps30")) app.settings.fpsCap = 30;
     }

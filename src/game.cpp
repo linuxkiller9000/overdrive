@@ -459,19 +459,19 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), {14, 10, 42, 255}, {64, 18, 60, 255});
     BeginMode3D(cam);
     if (coastal) {
-        // sand fills the whole scene; ocean sits fully beyond the sand's +x edge
-        float R = tm.boundsRadius + 400.f;
-        DrawPlane({tm.boundsCenter.x, -0.2f, tm.boundsCenter.z}, {R * 2.f, R * 2.f}, {214, 190, 140, 255});
-        float sandEdge = tm.boundsCenter.x + R;
-        float ox = sandEdge + 300.f;
-        DrawPlane({ox, -0.3f, tm.boundsCenter.z}, {600.f, R * 2.f}, {20, 90, 140, 255});
-        // animated foam line where the sand meets the water
-        float foam = 0.5f + 0.5f * std::sin(GetTime() * 1.5);
-        DrawPlane({sandEdge + 2.f, -0.25f, tm.boundsCenter.z}, {3.f + foam * 2.f, R * 2.f}, {220, 235, 240, 255});
-        // sun glow low over the ocean
-        DrawSphere({ox + 200.f, 60.f, tm.boundsCenter.z}, 30.f, Fade({255, 220, 150, 255}, 0.8f));
+        // bounding box of the track drives ground/ocean placement
+        float minX = 1e9f, maxX = -1e9f, minZ = 1e9f, maxZ = -1e9f;
+        for (auto& c : r.track.center) { minX = fminf(minX, c.x); maxX = fmaxf(maxX, c.x); minZ = fminf(minZ, c.y); maxZ = fmaxf(maxZ, c.y); }
+        float cx = (minX + maxX) * 0.5f, cz = (minZ + maxZ) * 0.5f;
+        DrawPlane({cx, -0.2f, cz}, {3000.f, 3000.f}, {214, 190, 140, 255});
+        // ocean strip east of the track with a foam edge, reaching the horizon
+        float shore = maxX + 140.f;
+        DrawPlane({shore + 900.f, -0.1f, cz}, {1800.f, 3000.f}, {20, 90, 140, 255});
+        float foam = 0.5f + 0.5f * (float)std::sin(GetTime() * 1.5);
+        DrawPlane({shore + 1.f, -0.08f, cz}, {4.f + foam * 3.f, 3000.f}, {225, 238, 242, 255});
+        DrawSphere({shore + 1200.f, 120.f, cz}, 60.f, Fade({255, 220, 150, 255}, 0.8f));
     }
-    DrawPlane({0, -0.05f, 0}, {1600, 1600}, {16, 16, 28, 255});
+    if (!coastal) DrawPlane({0, -0.05f, 0}, {1600, 1600}, {16, 16, 28, 255});
     DrawModel(tm.road, {0, 0, 0}, 1.f, WHITE);
     DrawModel(tm.edgeL, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.edgeR, {0, 0.02f, 0}, 1.f, WHITE);
@@ -619,7 +619,9 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         DrawSphere({s.pos.x, 1.f, s.pos.y}, 0.9f, Fade(sc, 0.25f));
     }
     for (auto& m : r.mines) {
-        DrawCylinder({m.pos.x, 0.15f, m.pos.y}, 1.0f, 1.2f, 0.3f, 10, {40, 40, 48, 255});
+        DrawCylinder({m.pos.x, 0.12f, m.pos.y}, 2.0f, 2.2f, 0.25f, 14, {235, 200, 40, 255});
+        DrawCylinder({m.pos.x, 0.2f, m.pos.y}, 1.5f, 1.6f, 0.3f, 14, {40, 40, 48, 255});
+        DrawSphere({m.pos.x, 1.2f, m.pos.y}, 0.35f, {255, 60, 60, 255});
         float blink = m.arm > 0.f ? 0.3f : (0.5f + 0.5f * std::sin(GetTime() * 8.0));
         DrawSphere({m.pos.x, 0.45f, m.pos.y}, 0.25f, Fade({255, 60, 60, 255}, blink));
     }
@@ -628,9 +630,7 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         DrawSphere({o.pos.x, 1.1f, o.pos.y}, 1.3f * pulse, Fade({120, 240, 255, 255}, 0.35f));
         DrawSphere({o.pos.x, 1.1f, o.pos.y}, 0.5f, {200, 250, 255, 255});
     }
-    for (size_t i = 0; i < r.cars.size(); i++)
-        if (r.cars[i].shieldT > 0.f)
-            DrawSphere({r.cars[i].pos.x, 1.1f, r.cars[i].pos.y}, 2.6f, Fade({60, 160, 255, 255}, 0.2f));
+
     const Color* cols = kCarCols;
     // rivals sitting on the camera->player sight line fade out instead of hiding the player
     const sim::Car& pc = r.cars[0];
@@ -662,6 +662,19 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             drawCar(r.cars[i], r.specs[i], col);
         }
     }
+    // shield bubbles last: wireframe shell + faint fill, no depth write, so the car stays visible inside
+    for (size_t i = 0; i < r.cars.size(); i++)
+        if (r.cars[i].shieldT > 0.f) {
+            Vector3 c{r.cars[i].pos.x, 1.0f, r.cars[i].pos.y};
+            rlDrawRenderBatchActive();
+            rlDisableDepthMask();
+            BeginBlendMode(BLEND_ALPHA);
+            DrawSphere(c, 2.4f, Fade({60, 160, 255, 255}, 0.10f));
+            DrawSphereWires(c, 2.45f, 10, 14, Fade({140, 210, 255, 255}, 0.75f));
+            EndBlendMode();
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
+        }
     EndMode3D();
     drawHud(r, app, GetScreenWidth(), GetScreenHeight());
     EndDrawing();
@@ -1026,4 +1039,62 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
     CloseWindow();
     std::printf("uiscreens: finished=%d place=%d\n", (int)race.cars[0].finished, race.cars[0].finishPlace);
     return race.cars[0].finished ? 0 : 2;
+}
+
+// Staged frames: place each weapon effect ahead of the player and render one frame per case.
+int runFxShots(GameApp& app, const std::string& prefix, int track) {
+    SetConfigFlags(FLAG_WINDOW_HIDDEN | FLAG_MSAA_4X_HINT);
+    InitWindow(1366, 768, "overdrive-fx");
+    SetTargetFPS(600);
+    const char* names[5] = {"mine", "shock", "shield", "bolt", "pickups"};
+    for (int k = 0; k < 5; k++) {
+        sim::Race race;
+        race.init(3, 1, 0, track);
+        race.countdown = 0;
+        TrackMeshes tm = buildTrack(race.track, app.settings.quality, sim::trackDefs()[race.trackIndex].theme);
+        Camera3D cam{}; cam.up = {0, 1, 0}; cam.fovy = 60; cam.projection = CAMERA_PERSPECTIVE;
+        ChaseCam cc;
+        // put the player 40 m past the start, other cars well back so they stay out of frame
+        float s0 = 40.f;
+        sim::Vec2 d = race.track.dirAt(s0);
+        race.cars[0].pos = race.track.pointAt(s0);
+        race.cars[0].heading = std::atan2(d.y, d.x);
+        race.cars[0].vel = d * 25.f;
+        race.cars[0].sHint = s0;
+        for (size_t i = 1; i < race.cars.size(); i++) {
+            float sb = race.track.total - 20.f - 12.f * i;
+            race.cars[i].pos = race.track.pointAt(sb);
+            race.cars[i].sHint = sb;
+        }
+        auto ahead = [&](float m, float side) {
+            sim::Vec2 dd = race.track.dirAt(s0 + m);
+            sim::Vec2 n{-dd.y, dd.x};
+            return race.track.pointAt(s0 + m) + n * side;
+        };
+        if (k == 0) { race.mines.push_back({ahead(18, -2), 1, 0.f, 20.f}); race.mines.push_back({ahead(30, 3), 1, 0.f, 20.f}); }
+        if (k == 1) { for (int j = 0; j < 3; j++) race.orbs.push_back({ahead(15.f + 14.f * j, j % 2 ? 2.f : -2.f), 8.f}); }
+        if (k == 2) { race.cars[0].shieldT = 5.f; race.cars[0].heldPickup = sim::PK_BOLT; }
+        if (k == 3) {
+            race.cars[1].pos = ahead(34, 0); race.cars[1].sHint = s0 + 34; race.cars[1].heading = race.cars[0].heading;
+            race.cars[0].heldPickup = sim::PK_BOLT;
+            std::vector<sim::CarInput> in(race.cars.size()); in[0].fire = true;
+            race.step(in);
+            for (int i = 0; i < 8; i++) race.step(std::vector<sim::CarInput>(race.cars.size()));
+        }
+        for (int f = 0; f < 4; f++) {
+            if (k != 3) race.cars[0].vel = d * 25.f;
+            updateChaseCam(cam, cc, race, sim::STEP * 10.f);
+            if (f == 3) {
+                drawFrame(race, tm, cam, app, 0);
+                char name[256];
+                std::snprintf(name, sizeof(name), "%s-%02d-%s.png", prefix.c_str(), k, names[k]);
+                TakeScreenshot(name);
+            } else drawFrame(race, tm, cam, app, 0);
+        }
+        UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
+        UnloadModel(tm.sidewalkL); UnloadModel(tm.sidewalkR); UnloadModel(tm.curbL); UnloadModel(tm.curbR);
+        if (tm.windows.meshCount > 0) UnloadModel(tm.windows);
+    }
+    CloseWindow();
+    return 0;
 }
