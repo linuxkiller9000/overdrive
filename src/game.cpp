@@ -688,11 +688,100 @@ static void updateChaseCam(Camera3D& cam, ChaseCam& cc, const sim::Race& r, floa
     cam.fovy = 60.f + speed * 0.3f + (p.boostLeft > 0 ? 8.f : 0.f);
 }
 
+// ---- post-processing stack (bloom, speed blur, grade). GLSL 1.20, runs on the GL 2.1 profile. ----
+struct PostFx {
+    bool tried = false, ok = false;
+    Shader bright{}, blur{}, comp{};
+    RenderTexture2D scene{}, a{}, b{};
+    int w = 0, h = 0;
+    int locTexel = 0, locSpeed = 0, locBloom = 0, locRes = 0;
+};
+static PostFx g_post;
+static const char* kFsBright =
+    "#version 120\nvarying vec2 fragTexCoord; uniform sampler2D texture0;\n"
+    "void main(){ vec3 c = texture2D(texture0, fragTexCoord).rgb; float l = max(c.r, max(c.g, c.b));\n"
+    "  float k = smoothstep(0.55, 0.95, l); gl_FragColor = vec4(c * k * 1.4, 1.0); }\n";
+static const char* kFsBlur =
+    "#version 120\nvarying vec2 fragTexCoord; uniform sampler2D texture0; uniform vec2 texel;\n"
+    "void main(){ vec3 s = texture2D(texture0, fragTexCoord).rgb * 0.227;\n"
+    "  s += (texture2D(texture0, fragTexCoord + texel*1.38).rgb + texture2D(texture0, fragTexCoord - texel*1.38).rgb) * 0.316;\n"
+    "  s += (texture2D(texture0, fragTexCoord + texel*3.23).rgb + texture2D(texture0, fragTexCoord - texel*3.23).rgb) * 0.070;\n"
+    "  gl_FragColor = vec4(s, 1.0); }\n";
+static const char* kFsComp =
+    "#version 120\nvarying vec2 fragTexCoord; uniform sampler2D texture0; uniform sampler2D texture1;\n"
+    "uniform float speed; uniform float bloomAmt;\n"
+    "void main(){ vec2 uv = fragTexCoord; vec2 d = uv - vec2(0.5, 0.55); float r = length(d);\n"
+    "  vec3 c = vec3(0.0); float wsum = 0.0;\n"
+    "  for (int i = 0; i < 7; i++) { float t = float(i) / 6.0; float w = 1.0 - t * 0.6;\n"
+    "    vec2 o = d * (speed * 0.07 * t * smoothstep(0.05, 0.6, r));\n"
+    "    vec2 ca = d * (0.004 * r);\n"
+    "    c += vec3(texture2D(texture0, uv - o + ca).r, texture2D(texture0, uv - o).g, texture2D(texture0, uv - o - ca).b) * w; wsum += w; }\n"
+    "  c /= wsum; c += texture2D(texture1, uv).rgb * bloomAmt;\n"
+    "  float lum = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(vec3(lum), c, 1.18);\n"
+    "  c = c * c * (3.0 - 2.0 * c) * 0.35 + c * 0.65;\n"
+    "  c *= vec3(1.04, 0.98, 1.06);\n"
+    "  c *= 1.0 - smoothstep(0.35, 0.95, r) * 0.55;\n"
+    "  gl_FragColor = vec4(c, 1.0); }\n";
+static bool postEnsure(int W, int H) {
+    if (!g_post.tried) {
+        g_post.tried = true;
+        g_post.bright = LoadShaderFromMemory(nullptr, kFsBright);
+        g_post.blur = LoadShaderFromMemory(nullptr, kFsBlur);
+        g_post.comp = LoadShaderFromMemory(nullptr, kFsComp);
+        g_post.ok = g_post.bright.id > 0 && g_post.blur.id > 0 && g_post.comp.id > 0 &&
+                    g_post.bright.id != rlGetShaderIdDefault() && g_post.blur.id != rlGetShaderIdDefault() && g_post.comp.id != rlGetShaderIdDefault();
+        if (g_post.ok) {
+            g_post.locTexel = GetShaderLocation(g_post.blur, "texel");
+            g_post.locSpeed = GetShaderLocation(g_post.comp, "speed");
+            g_post.locBloom = GetShaderLocation(g_post.comp, "bloomAmt");
+        }
+    }
+    if (!g_post.ok) return false;
+    if (g_post.w != W || g_post.h != H) {
+        if (g_post.w) { UnloadRenderTexture(g_post.scene); UnloadRenderTexture(g_post.a); UnloadRenderTexture(g_post.b); }
+        g_post.scene = LoadRenderTexture(W, H);
+        g_post.a = LoadRenderTexture(W / 4, H / 4);
+        g_post.b = LoadRenderTexture(W / 4, H / 4);
+        SetTextureFilter(g_post.a.texture, TEXTURE_FILTER_BILINEAR); SetTextureFilter(g_post.b.texture, TEXTURE_FILTER_BILINEAR);
+        SetTextureFilter(g_post.scene.texture, TEXTURE_FILTER_BILINEAR);
+        g_post.w = W; g_post.h = H;
+    }
+    return g_post.scene.id > 0;
+}
+static void postResolve(float speed01, float bloomAmt) {
+    int W = g_post.w, H = g_post.h, qw = W / 4, qh = H / 4;
+    // bright pass, scene -> a (quarter res)
+    BeginTextureMode(g_post.a); ClearBackground(BLACK);
+    BeginShaderMode(g_post.bright);
+    DrawTexturePro(g_post.scene.texture, {0, 0, (float)W, (float)-H}, {0, 0, (float)qw, (float)qh}, {0, 0}, 0.f, WHITE);
+    EndShaderMode(); EndTextureMode();
+    for (int it = 0; it < 2; it++) {
+        float th[2] = {1.f / qw, 0.f}, tv[2] = {0.f, 1.f / qh};
+        BeginTextureMode(g_post.b); ClearBackground(BLACK);
+        BeginShaderMode(g_post.blur); SetShaderValue(g_post.blur, g_post.locTexel, th, SHADER_UNIFORM_VEC2);
+        DrawTexturePro(g_post.a.texture, {0, 0, (float)qw, (float)-qh}, {0, 0, (float)qw, (float)qh}, {0, 0}, 0.f, WHITE);
+        EndShaderMode(); EndTextureMode();
+        BeginTextureMode(g_post.a); ClearBackground(BLACK);
+        BeginShaderMode(g_post.blur); SetShaderValue(g_post.blur, g_post.locTexel, tv, SHADER_UNIFORM_VEC2);
+        DrawTexturePro(g_post.b.texture, {0, 0, (float)qw, (float)-qh}, {0, 0, (float)qw, (float)qh}, {0, 0}, 0.f, WHITE);
+        EndShaderMode(); EndTextureMode();
+    }
+    ClearBackground(BLACK);
+    BeginShaderMode(g_post.comp);
+    SetShaderValue(g_post.comp, g_post.locSpeed, &speed01, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(g_post.comp, g_post.locBloom, &bloomAmt, SHADER_UNIFORM_FLOAT);
+    SetShaderValueTexture(g_post.comp, GetShaderLocation(g_post.comp, "texture1"), g_post.a.texture);
+    DrawTexturePro(g_post.scene.texture, {0, 0, (float)W, (float)-H}, {0, 0, (float)W, (float)H}, {0, 0}, 0.f, WHITE);
+    EndShaderMode();
+}
+
 static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D& cam, const GameApp& app, float steerVis) {
     const sim::Car& p = r.cars[0];
     sim::Vec2 fwd{std::cos(p.heading), std::sin(p.heading)};
     bool coastal = (tm.theme == 1);
+    bool usePost = app.settings.quality && postEnsure(GetScreenWidth(), GetScreenHeight());
     BeginDrawing();
+    if (usePost) BeginTextureMode(g_post.scene);
     ClearBackground({8, 8, 20, 255});
     if (coastal)
         DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), {255, 150, 90, 255}, {90, 50, 110, 255});
@@ -889,17 +978,15 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             if (along > -0.1f && along < 1.0f) {
                 sim::Vec2 closest{camPos.x + seg.x * along, camPos.y + seg.y * along};
                 float d = sim::len(r.cars[i].pos - closest);
-                if (d < 3.0f) col.a = 70;
+                if (d < 3.0f) col.a = 150;   // chase-cam occlusion fade: still readable, no longer a ghost
             }
         }
         if (col.a < 255) {
             rlDrawRenderBatchActive();
-            rlDisableDepthMask();
-            BeginBlendMode(BLEND_ALPHA);
+            BeginBlendMode(BLEND_ALPHA);   // depth writes stay on so the car's own far side and interior do not show through
             drawCar(r.cars[i], r.specs[i], col);
             EndBlendMode();
             rlDrawRenderBatchActive();
-            rlEnableDepthMask();
         } else {
             drawCar(r.cars[i], r.specs[i], col);
         }
@@ -918,6 +1005,12 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             rlEnableDepthMask();
         }
     EndMode3D();
+    if (usePost) {
+        EndTextureMode();
+        float sp = fminf(1.f, sim::len(p.vel) / fmaxf(1.f, r.specs[0].maxSpeed));
+        if (p.boostLeft > 0.f) sp = fminf(1.4f, sp + 0.35f);
+        postResolve(sp, 0.85f);
+    }
     drawHud(r, app, GetScreenWidth(), GetScreenHeight());
     EndDrawing();
 }
