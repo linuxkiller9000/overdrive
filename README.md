@@ -16,6 +16,19 @@ Extract the entire game archive before starting `sh run.sh` on Linux or `run.bat
 
 **Back up saves before testing.** Preview 430cf64 shares `~/.config/overdrive` on Linux or `%APPDATA%\overdrive` on Windows with v0.4. Do not run both together. Restore your backup before returning to v0.4. This preview does not have an isolated profile directory.
 
+## In-game screenshots
+
+Actual development captures from the playable preview, not concept art. These
+show unfinished visuals and are not frame-rate measurements.
+
+### NEON DISTRICT, LOW
+
+![NEON DISTRICT gameplay with authored city buildings, player car and pickup](https://github.com/linuxkiller9000/overdrive/releases/download/preview-430cf64/overdrive-preview-city.png)
+
+### Settings and native vehicle preview
+
+![OVERDRIVE settings with LOW selected and native 180MX vehicle preview](https://github.com/linuxkiller9000/overdrive/releases/download/preview-430cf64/overdrive-preview-settings.png)
+
 ## What is in the preview
 
 Six routes and six rule sets; 20 stock handling profiles plus a procedural custom-car creator; offline garage/progress; combat pickups; local two-player Street Race; keyboard and gamepad mapping; original synthesized audio.
