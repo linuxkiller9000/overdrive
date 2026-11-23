@@ -355,3 +355,45 @@ Settings loadSettings(const std::string& path) {
 }
 
 } // namespace sim
+
+namespace sim {
+
+CarInput mapKeys(const Settings& s, const RawKeys& k) {
+    (void)s; // key codes already resolved by the caller via IsKeyDown
+    CarInput in{};
+    if (k.accel) in.throttle = 1;
+    if (k.brake) in.brake = 1;
+    if (k.left) in.steer -= 1;
+    if (k.right) in.steer += 1;
+    in.handbrake = k.handbrake;
+    in.boost = k.boost;
+    return in;
+}
+
+CarInput mapGamepad(const Settings& s, const RawPad& p) {
+    CarInput in{};
+    float dz = s.padDeadzone;
+    if (std::fabs(p.steerAxis) > dz) in.steer = p.steerAxis * s.padSteerSens;
+    if (p.left) in.steer = -1;
+    if (p.right) in.steer = 1;
+    if (p.accelAxis > 0.1f) in.throttle = p.accelAxis;
+    if (p.accel) in.throttle = 1;
+    if (p.brake) in.brake = 1;
+    in.handbrake = p.handbrake;
+    in.boost = p.boost;
+    if (in.steer > 1.f) in.steer = 1.f;
+    if (in.steer < -1.f) in.steer = -1.f;
+    return in;
+}
+
+CarInput mergeInputs(CarInput a, CarInput b) {
+    CarInput in = a;
+    if (b.throttle > in.throttle) in.throttle = b.throttle;
+    if (b.brake > in.brake) in.brake = b.brake;
+    if (b.steer != 0.f) in.steer = b.steer;
+    in.handbrake = a.handbrake || b.handbrake;
+    in.boost = a.boost || b.boost;
+    return in;
+}
+
+} // namespace sim

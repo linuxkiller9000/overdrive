@@ -25,3 +25,15 @@
   groups pass.
 - Demo evidence re-captured: grid start, corner traffic, turbo activation,
   pause overlay, finish banner (finish=1).
+
+## v0.1.2 - dt-based camera, shared input mapping, HUD contrast (2026-11-23)
+
+- Chase camera now updates every sim step with dt-based smoothing (1-exp(-6dt))
+  and bounded distance (8 + speed*0.08): the player car stays in frame through
+  acceleration and turbo, independent of render cadence.
+- Input handling split into pure mapKeys/mapGamepad/mergeInputs (sim layer,
+  unit-tested); the demo drives the player through mapGamepad with scripted
+  analog axes, exercising the same mapping the interactive path polls.
+- Finish banner, countdown, BOOST! and WRONG WAY now draw with black outline
+  for contrast against bright track/car colors.
+- 9/9 test groups pass (added input mapping tests).

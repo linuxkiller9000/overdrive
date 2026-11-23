@@ -104,28 +104,31 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
 }
 
 sim::CarInput readInput(const sim::Settings& s) {
-    sim::CarInput in{};
-    if (IsKeyDown(s.keyAccel) || IsKeyDown(s.keyAccelAlt)) in.throttle = 1;
-    if (IsKeyDown(s.keyBrake) || IsKeyDown(s.keyBrakeAlt)) in.brake = 1;
-    if (IsKeyDown(s.keyLeft) || IsKeyDown(s.keyLeftAlt)) in.steer -= 1;
-    if (IsKeyDown(s.keyRight) || IsKeyDown(s.keyRightAlt)) in.steer += 1;
-    if (IsKeyDown(s.keyHandbrake)) in.handbrake = true;
-    if (IsKeyPressed(s.keyBoost)) in.boost = true;
+    sim::RawKeys k{};
+    k.accel = IsKeyDown(s.keyAccel) || IsKeyDown(s.keyAccelAlt);
+    k.brake = IsKeyDown(s.keyBrake) || IsKeyDown(s.keyBrakeAlt);
+    k.left = IsKeyDown(s.keyLeft) || IsKeyDown(s.keyLeftAlt);
+    k.right = IsKeyDown(s.keyRight) || IsKeyDown(s.keyRightAlt);
+    k.handbrake = IsKeyDown(s.keyHandbrake);
+    k.boost = IsKeyPressed(s.keyBoost);
+    sim::RawPad p{};
     if (IsGamepadAvailable(0)) {
-        float ax = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
-        float dz = s.padDeadzone;
-        if (std::fabs(ax) > dz) in.steer = ax * s.padSteerSens;
-        if (IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) in.steer = -1; // button steering works too
-        if (IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) in.steer = 1;
-        float trig = GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_TRIGGER);
-        if (trig > 0.1f) in.throttle = trig;
-        if (IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) in.throttle = 1; // button accel works too
-        if (IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_LEFT)) in.brake = 1;
-        if (IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_UP)) in.handbrake = true;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) in.boost = true;
+        p.steerAxis = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+        p.accelAxis = GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_TRIGGER);
+        p.left = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT);
+        p.right = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT);
+        p.accel = IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+        p.brake = IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_LEFT);
+        p.handbrake = IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_UP);
+        p.boost = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT);
     }
-    in.steer = fminf(fmaxf(in.steer, -1.f), 1.f);
-    return in;
+    return sim::mergeInputs(sim::mapKeys(s, k), sim::mapGamepad(s, p));
+}
+
+static void drawTextOutline(const char* text, int x, int y, int size, Color color) {
+    DrawText(text, x - 2, y - 2, size, BLACK);
+    DrawText(text, x + 2, y + 2, size, BLACK);
+    DrawText(text, x, y, size, color);
 }
 
 void drawHud(const sim::Race& r, const GameApp& app, int W, int H) {
@@ -146,17 +149,17 @@ void drawHud(const sim::Race& r, const GameApp& app, int W, int H) {
         DrawText("TURBO", W / 2 - 44, H - 63, 20, {255, 200, 40, 255});
     }
     if (p.boostLeft > 0.f)
-        DrawText("BOOST!", W / 2 - 50, H - 110, 28, {255, 200, 40, 255});
-    if (p.wrongWay) DrawText("WRONG WAY", W / 2 - 110, H / 2 - 40, 34, RED);
+        drawTextOutline("BOOST!", W / 2 - 50, H - 110, 28, {255, 200, 40, 255});
+    if (p.wrongWay) drawTextOutline("WRONG WAY", W / 2 - 110, H / 2 - 40, 34, RED);
     if (r.countdown > 0.f) {
         int cd = (int)r.countdown;
-        DrawText(cd > 0 ? TextFormat("%d", cd) : "GO!", W / 2 - 30, H / 2 - 60, 72, GOLD);
+        drawTextOutline(cd > 0 ? TextFormat("%d", cd) : "GO!", W / 2 - 30, H / 2 - 60, 72, GOLD);
     }
     if (p.finished) {
-        DrawRectangle(0, 0, W, H, {0, 0, 0, 120});
-        DrawText(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace, p.finishPlace == 2 ? "nd" : "rd"),
-                 W / 2 - 140, H / 2 - 40, 40, GOLD);
-        DrawText("Press ESC", W / 2 - 60, H / 2 + 20, 20, GRAY);
+        DrawRectangle(0, 0, W, H, {0, 0, 0, 160});
+        drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace, p.finishPlace == 2 ? "nd" : "rd"),
+                        W / 2 - 140, H / 3, 44, GOLD);
+        drawTextOutline("Press ESC", W / 2 - 60, H / 3 + 60, 20, LIGHTGRAY);
     }
     // minimap
     float mm = 150.f, mx = W - mm - 16, my = 60;
@@ -186,17 +189,25 @@ static void configureWindow(const sim::Settings& s) {
     if (s.fullscreen) ToggleFullscreen();
 }
 
-static void drawFrame(const sim::Race& r, const TrackMeshes& tm, Camera3D& cam, const GameApp& app, float steerVis) {
+// dt-based chase camera: tracks every sim step, independent of render cadence.
+struct ChaseCam { Vector3 smoothed{}; bool init = false; };
+static void updateChaseCam(Camera3D& cam, ChaseCam& cc, const sim::Race& r, float dt) {
     const sim::Car& p = r.cars[0];
     sim::Vec2 fwd{std::cos(p.heading), std::sin(p.heading)};
     float speed = sim::len(p.vel);
-    float dist = 9.f + speed * 0.12f;
-    Vector3 camPos = {p.pos.x - fwd.x * dist, 5.f + speed * 0.04f, p.pos.y - fwd.y * dist};
-    static Vector3 smoothed = camPos;
-    smoothed = Vector3Lerp(smoothed, camPos, 0.18f);
-    cam.position = smoothed;
-    cam.target = {p.pos.x + fwd.x * 3.f, 0.8f, p.pos.y + fwd.y * 3.f};
-    cam.fovy = 60.f + speed * 0.35f + (p.boostLeft > 0 ? 8.f : 0.f);
+    float dist = 8.f + speed * 0.08f; // bounded: player stays in view through boost
+    Vector3 camPos = {p.pos.x - fwd.x * dist, 4.5f + speed * 0.03f, p.pos.y - fwd.y * dist};
+    if (!cc.init) { cc.smoothed = camPos; cc.init = true; }
+    float a = 1.f - std::exp(-6.f * dt);
+    cc.smoothed = Vector3Lerp(cc.smoothed, camPos, a);
+    cam.position = cc.smoothed;
+    cam.target = {p.pos.x + fwd.x * 2.5f, 0.8f, p.pos.y + fwd.y * 2.5f};
+    cam.fovy = 60.f + speed * 0.3f + (p.boostLeft > 0 ? 8.f : 0.f);
+}
+
+static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D& cam, const GameApp& app, float steerVis) {
+    const sim::Car& p = r.cars[0];
+    sim::Vec2 fwd{std::cos(p.heading), std::sin(p.heading)};
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
     BeginMode3D(cam);
@@ -253,6 +264,7 @@ int runGame(GameApp& app) {
     cam.up = {0, 1, 0};
     cam.fovy = 60;
     cam.projection = CAMERA_PERSPECTIVE;
+    ChaseCam cc;
     TrackMeshes tm = buildTrack(race.track, app.settings.quality);
     bool paused = false;
     double acc = 0;
@@ -266,6 +278,7 @@ int runGame(GameApp& app) {
             sim::CarInput ai = sim::aiDrive(race, 1);
             sim::CarInput ai2 = sim::aiDrive(race, 2);
             race.step({in, ai, ai2});
+            updateChaseCam(cam, cc, race, sim::STEP);
             acc -= sim::STEP;
         }
         drawFrame(race, tm, cam, app, in.steer);
@@ -292,6 +305,7 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
     cam.fovy = 60;
     cam.projection = CAMERA_PERSPECTIVE;
     TrackMeshes tm = buildTrack(race.track, app.settings.quality);
+    ChaseCam cc;
     int taken = 0;
     bool gotCorner = false, gotBoost = false, gotPause = false, gotFinish = false;
     auto snap = [&](const char* tag) {
@@ -301,9 +315,19 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
         taken++;
     };
     for (int f = 0; f < 60 * 300; f++) {
-        sim::CarInput in = sim::aiDrive(race, 0); // player drives the racing line
-        if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) in.boost = true;
+        // player input runs through the same mapGamepad mapping the interactive
+        // path uses, with scripted analog axes following the AI racing line
+        sim::CarInput aiIn = sim::aiDrive(race, 0);
+        if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) aiIn.boost = true;
+        sim::RawPad pad{};
+        pad.steerAxis = aiIn.steer;
+        pad.accelAxis = aiIn.throttle;
+        pad.brake = aiIn.brake > 0.5f;
+        pad.handbrake = aiIn.handbrake;
+        pad.boost = aiIn.boost;
+        sim::CarInput in = sim::mapGamepad(app.settings, pad);
         race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+        updateChaseCam(cam, cc, race, sim::STEP);
         float t = race.time();
         // grant one boost charge mid-race so activation is guaranteed on camera
         if (!gotBoost && race.cars[0].lap >= 1 && race.cars[0].boostCharges == 0 && t > 30.f && race.cars[0].boostLeft <= 0)

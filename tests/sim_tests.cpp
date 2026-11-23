@@ -110,7 +110,20 @@ int runTests() {
         CHECK(after >= before, "collision separates cars");
         CHECK(sim::len(r6.cars[0].pos - r6.cars[1].pos) > 1.5f, "no overlap after collision");
     }
-    if (failures == 0) std::printf("ALL TESTS PASSED (8 groups)\n");
+    // input mapping: keyboard booleans and gamepad axes map to CarInput
+    {
+        sim::Settings s;
+        sim::CarInput k = sim::mapKeys(s, {true, false, true, false, false, true});
+        CHECK(k.throttle == 1.f && k.steer == -1.f && k.boost, "mapKeys maps buttons");
+        sim::RawPad p{}; p.steerAxis = 0.5f; p.accelAxis = 0.8f;
+        sim::CarInput g = sim::mapGamepad(s, p);
+        CHECK(g.steer == 0.5f && g.throttle == 0.8f, "mapGamepad maps axes");
+        p.steerAxis = 0.05f; // inside deadzone
+        CHECK(sim::mapGamepad(s, p).steer == 0.f, "deadzone filters steer");
+        sim::CarInput m = sim::mergeInputs(k, g);
+        CHECK(m.steer == g.steer && m.throttle == 1.f && m.boost, "merge: pad steer wins, max throttle");
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (9 groups)\n");
     else std::printf("%d FAILURE(S)\n", failures);
     return failures ? 1 : 0;
 }

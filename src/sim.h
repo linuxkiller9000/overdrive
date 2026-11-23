@@ -117,6 +117,15 @@ struct Settings {
     float padDeadzone = 0.18f, padSteerSens = 1.0f;
     int bestLapMs = -1, bestRaceMs = -1;
 };
+
+// Pure input mapping shared by the interactive path (polled hardware) and the
+// demo path (scripted axes), so both exercise the same translation to CarInput.
+struct RawKeys { bool accel = false, brake = false, left = false, right = false, handbrake = false, boost = false; };
+struct RawPad { float steerAxis = 0, accelAxis = 0; bool left = false, right = false, accel = false, brake = false, handbrake = false, boost = false; };
+CarInput mapKeys(const Settings& s, const RawKeys& k);
+CarInput mapGamepad(const Settings& s, const RawPad& p);
+CarInput mergeInputs(CarInput a, CarInput b); // analog steer: nonzero pad axis wins
+
 bool saveSettings(const Settings& s, const std::string& path);
 Settings loadSettings(const std::string& path); // corrupt/missing -> defaults
 
