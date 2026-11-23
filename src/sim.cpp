@@ -102,10 +102,18 @@ std::vector<CarSpec> defaultRoster() {
     return {balanced, sprinter, heavy};
 }
 
-void Race::init(int laps) {
+void Race::init(int laps, float aiSkill, int playerVehicle) {
     lapsToWin = laps;
     tick = 0; countdown = 3.2f; finishedCount = 0;
     specs = defaultRoster();
+    // player drives the chosen vehicle; AI take the other specs with the difficulty multiplier
+    std::vector<CarSpec> roster = defaultRoster();
+    CarSpec player = roster[playerVehicle % (int)roster.size()];
+    specs[0] = player;
+    for (size_t i = 1; i < specs.size(); i++) {
+        specs[i] = roster[(playerVehicle + i) % roster.size()];
+        specs[i].skill *= aiSkill;
+    }
     track.build(neonLoopControlPoints(), 9.f, 24);
     cars.clear();
     int nCars = (int)specs.size();
@@ -334,6 +342,8 @@ Settings loadSettings(const std::string& path) {
             else if (key == "sfxVol") tmp.sfxVol = std::stof(val);
             else if (key == "muted") tmp.muted = std::stoi(val) != 0;
             else if (key == "playerVehicle") tmp.playerVehicle = std::stoi(val);
+            else if (key == "aiDifficulty") tmp.aiDifficulty = std::stoi(val);
+            else if (key == "laps") tmp.laps = std::stoi(val);
             else if (key == "keyAccel") tmp.keyAccel = std::stoi(val);
             else if (key == "keyBrake") tmp.keyBrake = std::stoi(val);
             else if (key == "keyLeft") tmp.keyLeft = std::stoi(val);

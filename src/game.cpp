@@ -255,38 +255,142 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     EndDrawing();
 }
 
+// ---------- menus ----------
+static const char* diffName(int d) { return d == 0 ? "ROOKIE" : d == 2 ? "ACE" : "PRO"; }
+
+struct MenuResult { bool quit = false; };
+
+// returns true if the user chose "race"
+static bool titleMenu(GameApp& app) {
+    int sel = 0;
+    const char* items[] = {"START RACE", "VEHICLE", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
+    std::vector<sim::CarSpec> roster = sim::defaultRoster();
+    while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_UP)) sel = (sel + 6) % 7;
+        if (IsKeyPressed(KEY_DOWN)) sel = (sel + 1) % 7;
+        if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_RIGHT)) {
+            int d = IsKeyPressed(KEY_LEFT) ? -1 : 1;
+            if (sel == 1) app.settings.playerVehicle = (app.settings.playerVehicle + (int)roster.size() + d) % (int)roster.size();
+            if (sel == 2) app.settings.aiDifficulty = (app.settings.aiDifficulty + 3 + d) % 3;
+            if (sel == 3) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
+            if (sel == 4) app.settings.quality = 1 - app.settings.quality;
+            if (sel == 5) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
+        }
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
+            if (sel == 0) return true;
+            if (sel == 6) return false;
+            if (sel == 1) app.settings.playerVehicle = (app.settings.playerVehicle + 1) % (int)roster.size();
+            if (sel == 2) app.settings.aiDifficulty = (app.settings.aiDifficulty + 1) % 3;
+            if (sel == 3) app.settings.laps = app.settings.laps == 1 ? 3 : app.settings.laps == 3 ? 5 : 1;
+            if (sel == 4) app.settings.quality = 1 - app.settings.quality;
+            if (sel == 5) app.settings.fpsCap = app.settings.fpsCap == 60 ? 30 : 60;
+        }
+        BeginDrawing();
+        ClearBackground({8, 8, 20, 255});
+        drawTextOutline("OVERDRIVE", GetScreenWidth() / 2 - 170, 60, 64, {255, 45, 130, 255});
+        for (int i = 0; i < 7; i++) {
+            const char* val = "";
+            if (i == 1) val = roster[app.settings.playerVehicle % (int)roster.size()].name.c_str();
+            if (i == 2) val = diffName(app.settings.aiDifficulty);
+            if (i == 3) val = TextFormat("%d", app.settings.laps);
+            if (i == 4) val = app.settings.quality ? "HIGH" : "LOW";
+            if (i == 5) val = TextFormat("%d", app.settings.fpsCap);
+            drawTextOutline(TextFormat("%s%s  %s", i == sel ? "> " : "  ", items[i], val),
+                            GetScreenWidth() / 2 - 160, 170 + i * 40, 28, i == sel ? GOLD : WHITE);
+        }
+        drawTextOutline("UP/DOWN select   LEFT/RIGHT change   ENTER start", GetScreenWidth() / 2 - 290, GetScreenHeight() - 50, 18, GRAY);
+        EndDrawing();
+    }
+    return false;
+}
+
+// pause menu: 0 resume, 1 restart, 2 quit to title
+static int pauseMenu(const GameApp& app) {
+    (void)app;
+    int sel = 0;
+    const char* items[] = {"RESUME", "RESTART RACE", "QUIT TO TITLE"};
+    while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_ESCAPE)) return 0;
+        if (IsKeyPressed(KEY_UP)) sel = (sel + 2) % 3;
+        if (IsKeyPressed(KEY_DOWN)) sel = (sel + 1) % 3;
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) return sel;
+        BeginDrawing();
+        ClearBackground({8, 8, 20, 255});
+        drawTextOutline("PAUSED", GetScreenWidth() / 2 - 90, 120, 48, WHITE);
+        for (int i = 0; i < 3; i++)
+            drawTextOutline(TextFormat("%s%s", i == sel ? "> " : "  ", items[i]),
+                            GetScreenWidth() / 2 - 140, 240 + i * 44, 28, i == sel ? GOLD : WHITE);
+        EndDrawing();
+    }
+    return 2;
+}
+
+static void resultsScreen(GameApp& app, const sim::Race& race) {
+    const sim::Car& p = race.cars[0];
+    // persist bests
+    if (p.bestLap > 0 && (app.settings.bestLapMs < 0 || p.bestLap * 1000.f < app.settings.bestLapMs))
+        app.settings.bestLapMs = (int)(p.bestLap * 1000.f);
+    if (p.finishPlace == 1 && (app.settings.bestRaceMs < 0 || p.raceTime * 1000.f < app.settings.bestRaceMs))
+        app.settings.bestRaceMs = (int)(p.raceTime * 1000.f);
+    sim::saveSettings(app.settings, app.settingsPath);
+    while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) return;
+        BeginDrawing();
+        ClearBackground({8, 8, 20, 255});
+        drawTextOutline(p.finishPlace == 1 ? "YOU WIN!" : TextFormat("FINISHED %d%s", p.finishPlace, p.finishPlace == 2 ? "nd" : "rd"),
+                        GetScreenWidth() / 2 - 160, 90, 48, GOLD);
+        drawTextOutline(TextFormat("RACE TIME  %d:%05.2f", (int)(p.raceTime / 60), std::fmod(p.raceTime, 60.f)),
+                        GetScreenWidth() / 2 - 170, 200, 28, WHITE);
+        if (p.bestLap > 0)
+            drawTextOutline(TextFormat("BEST LAP   %0.2f s", p.bestLap), GetScreenWidth() / 2 - 170, 240, 28, WHITE);
+        if (app.settings.bestLapMs > 0)
+            drawTextOutline(TextFormat("TRACK BEST LAP   %d:%05.2f", app.settings.bestLapMs / 60000, std::fmod(app.settings.bestLapMs / 1000.f, 60.f)),
+                            GetScreenWidth() / 2 - 170, 300, 22, GRAY);
+        if (app.settings.bestRaceMs > 0)
+            drawTextOutline(TextFormat("TRACK BEST WIN   %d:%05.2f", app.settings.bestRaceMs / 60000, std::fmod(app.settings.bestRaceMs / 1000.f, 60.f)),
+                            GetScreenWidth() / 2 - 170, 330, 22, GRAY);
+        drawTextOutline("ENTER continue", GetScreenWidth() / 2 - 90, GetScreenHeight() - 60, 22, GOLD);
+        EndDrawing();
+    }
+}
+
 int runGame(GameApp& app) {
     configureWindow(app.settings);
     SetExitKey(0); // ESC handled manually for pause
-    sim::Race race;
-    race.init(3);
-    Camera3D cam{};
-    cam.up = {0, 1, 0};
-    cam.fovy = 60;
-    cam.projection = CAMERA_PERSPECTIVE;
-    ChaseCam cc;
-    TrackMeshes tm = buildTrack(race.track, app.settings.quality);
-    bool paused = false;
-    double acc = 0;
     while (!WindowShouldClose()) {
-        if (IsKeyPressed(app.settings.keyPause)) paused = !paused;
-        if (IsKeyPressed(KEY_F3)) app.showFps = !app.showFps;
-        if (IsKeyPressed(KEY_F11)) ToggleFullscreen();
-        acc += GetFrameTime();
-        sim::CarInput in = paused ? sim::CarInput{} : readInput(app.settings);
-        while (acc >= sim::STEP) {
-            sim::CarInput ai = sim::aiDrive(race, 1);
-            sim::CarInput ai2 = sim::aiDrive(race, 2);
-            race.step({in, ai, ai2});
-            updateChaseCam(cam, cc, race, sim::STEP);
-            acc -= sim::STEP;
-        }
-        drawFrame(race, tm, cam, app, in.steer);
-        if (paused) {
-            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), {0, 0, 0, 140});
-            DrawText("PAUSED", GetScreenWidth() / 2 - 80, GetScreenHeight() / 2 - 30, 36, WHITE);
-            DrawText("ESC resume | F3 fps | F11 fullscreen", GetScreenWidth() / 2 - 150, GetScreenHeight() / 2 + 20, 18, GRAY);
-            EndDrawing();
+        if (!titleMenu(app)) break;
+        sim::saveSettings(app.settings, app.settingsPath);
+        float aiSkill = app.settings.aiDifficulty == 0 ? 0.88f : app.settings.aiDifficulty == 2 ? 1.06f : 0.97f;
+        bool quitToTitle = false;
+        while (!quitToTitle && !WindowShouldClose()) {
+            sim::Race race;
+            race.init(app.settings.laps, aiSkill, app.settings.playerVehicle);
+            Camera3D cam{};
+            cam.up = {0, 1, 0};
+            cam.fovy = 60;
+            cam.projection = CAMERA_PERSPECTIVE;
+            ChaseCam cc;
+            TrackMeshes tm = buildTrack(race.track, app.settings.quality);
+            double acc = 0;
+            int action = 0; // 0 racing, 1 restart, 2 quit to title
+            while (!WindowShouldClose() && action == 0 && !race.cars[0].finished) {
+                if (IsKeyPressed(app.settings.keyPause)) action = pauseMenu(app);
+                if (action != 0) break;
+                if (IsKeyPressed(KEY_F3)) app.showFps = !app.showFps;
+                if (IsKeyPressed(KEY_F11)) ToggleFullscreen();
+                acc += GetFrameTime();
+                sim::CarInput in = race.countdown > 0.f ? sim::CarInput{} : readInput(app.settings);
+                while (acc >= sim::STEP) {
+                    race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+                    updateChaseCam(cam, cc, race, sim::STEP);
+                    acc -= sim::STEP;
+                }
+                drawFrame(race, tm, cam, app, in.steer);
+            }
+            if (race.cars[0].finished && action == 0) resultsScreen(app, race);
+            UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR);
+            if (action == 1) continue; // restart race
+            quitToTitle = true;
         }
     }
     sim::saveSettings(app.settings, app.settingsPath);
@@ -349,4 +453,48 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
     CloseWindow();
     std::printf("demo frames: %d (finish=%d)\n", taken, (int)gotFinish);
     return gotFinish ? 0 : 2;
+}
+
+// Runtime smoke test of the interactive loop: real window, real readInput polling,
+// scripted player input through the same mapGamepad mapping, full race sim.
+// (X11 XTest injection does not reach GLFW under Xvfb, verified by probe; physical
+// key polling therefore still needs on-hardware verification.)
+int runUITest(GameApp& app) {
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
+    InitWindow(1280, 720, "overdrive-uitest");
+    SetTargetFPS(240);
+    sim::Race race;
+    race.init(app.settings.laps, 0.97f, app.settings.playerVehicle);
+    Camera3D cam{};
+    cam.up = {0, 1, 0};
+    cam.fovy = 60;
+    cam.projection = CAMERA_PERSPECTIVE;
+    ChaseCam cc;
+    TrackMeshes tm = buildTrack(race.track, app.settings.quality);
+    bool polledOk = true;
+    double acc = 0;
+    for (int f = 0; f < 60 * 200 && !race.cars[0].finished && !WindowShouldClose(); f++) {
+        acc += GetFrameTime();
+        sim::CarInput hw = race.countdown > 0.f ? sim::CarInput{} : readInput(app.settings);
+        if (hw.throttle < 0.f || hw.steer < -1.f || hw.steer > 1.f) polledOk = false;
+        sim::CarInput aiIn = sim::aiDrive(race, 0);
+        if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) aiIn.boost = true;
+        sim::RawPad pad{};
+        pad.steerAxis = aiIn.steer;
+        pad.accelAxis = aiIn.throttle;
+        pad.brake = aiIn.brake > 0.5f;
+        pad.handbrake = aiIn.handbrake;
+        pad.boost = aiIn.boost;
+        sim::CarInput in = sim::mergeInputs(hw, sim::mapGamepad(app.settings, pad));
+        while (acc >= sim::STEP) {
+            race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
+            updateChaseCam(cam, cc, race, sim::STEP);
+            acc -= sim::STEP;
+        }
+        drawFrame(race, tm, cam, app, in.steer);
+    }
+    CloseWindow();
+    std::printf("uitest: polledOk=%d finished=%d progress=%.1f\n", (int)polledOk,
+                (int)race.cars[0].finished, race.cars[0].progress);
+    return (polledOk && race.cars[0].finished) ? 0 : 2;
 }

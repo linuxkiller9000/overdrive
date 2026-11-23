@@ -37,3 +37,19 @@
 - Finish banner, countdown, BOOST! and WRONG WAY now draw with black outline
   for contrast against bright track/car colors.
 - 9/9 test groups pass (added input mapping tests).
+
+## v0.2.0 - Phase 3 core game flow (2026-11-23)
+
+- Title menu (start, vehicle select STANDARD/SPRINTER/HAULER, AI difficulty
+  ROOKIE/PRO/ACE, laps 1/3/5, quality, fps cap, quit), pause menu
+  (resume/restart/quit to title), results screen with race time, best lap and
+  persisted track records.
+- AI difficulty scales AI target-speed skill; player vehicle choice applies the
+  roster spec to the player car.
+- Settings persist aiDifficulty/laps/playerVehicle/keys to
+  ~/.config/overdrive/settings.cfg.
+- --uitest runtime smoke test: full windowed race driven through the shared
+  input-mapping path. Note: XTest keyboard injection does not reach GLFW under
+  Xvfb (probe-verified), so physical key polling is covered by unit tests up to
+  the GLFW boundary and still needs on-hardware verification by the user.
+- 9/9 headless test groups pass.

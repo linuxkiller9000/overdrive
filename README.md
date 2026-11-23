@@ -16,13 +16,14 @@ cmake --build build
 ## Run
 
 ```
-./build/overdrive            # play
+./build/overdrive            # play (title menu: start, vehicle, difficulty, laps, quality, fps cap)
 ./build/overdrive --fps30    # cap at 30 FPS for weaker hardware
 ./build/overdrive --low      # minimal visuals
 ./build/overdrive --selftest # headless simulation tests
+./build/overdrive --uitest   # headless runtime loop test (window + input mapping + race)
 ```
 
-Controls: WASD or arrows to drive, SPACE handbrake, SHIFT turbo, ESC pause, F3 FPS overlay, F11 fullscreen. Gamepads work too: left stick steers, right trigger accelerates, face buttons drive without sticks. All keys remap in `~/.config/overdrive/settings.cfg`.
+Menus are keyboard driven (arrows + enter). Controls: WASD or arrows to drive, SPACE handbrake, SHIFT turbo, ESC pause, F3 FPS overlay, F11 fullscreen. Gamepads work too: left stick steers, right trigger accelerates, face buttons drive without sticks. Vehicle choice (STANDARD / SPRINTER / HAULER), AI difficulty, laps and key remaps persist in `~/.config/overdrive/settings.cfg`.
 
 ## Layout
 

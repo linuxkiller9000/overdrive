@@ -11,3 +11,4 @@ struct GameApp {
 
 int runGame(GameApp& app);                       // interactive
 int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int shotEvery, int shotCount);
+int runUITest(GameApp& app);                       // headless XTest input-path test

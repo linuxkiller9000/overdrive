@@ -20,6 +20,7 @@ int main(int argc, char** argv) {
     app.settings = sim::loadSettings(app.settingsPath);
     for (int i = 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "--selftest")) return runTests();
+        if (!std::strcmp(argv[i], "--uitest")) return runUITest(app);
         if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) return runScreenshots(app, argv[++i], 240, 120, 4);
         if (!std::strcmp(argv[i], "--low")) app.settings.quality = 0;
         if (!std::strcmp(argv[i], "--fps30")) app.settings.fpsCap = 30;

@@ -93,7 +93,7 @@ struct Race {
     float countdown = 3.2f;   // inputs ignored while > 0
     mutable uint32_t rngState = 0x9E3779B9u;
 
-    void init(int laps);
+    void init(int laps, float aiSkill = 1.f, int playerVehicle = 0);
     void step(const std::vector<CarInput>& inputs);
     uint32_t rand() const;
     float time() const { return tick * STEP; }
@@ -111,6 +111,8 @@ struct Settings {
     float masterVol = 1.f, musicVol = 1.f, sfxVol = 1.f;
     bool muted = false;
     int playerVehicle = 0;
+    int aiDifficulty = 1;       // 0 rookie, 1 pro, 2 ace
+    int laps = 3;               // 1, 3 or 5
     int keyAccel = 265, keyBrake = 264, keyLeft = 263, keyRight = 262, // arrows
         keyAccelAlt = 87, keyBrakeAlt = 83, keyLeftAlt = 65, keyRightAlt = 68, // WASD
         keyHandbrake = 32, keyBoost = 340 /*left shift*/, keyPause = 256 /*esc*/;
