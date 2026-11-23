@@ -16,7 +16,11 @@ include_directories(${RAYLIB_DIR}/include ${SDK_DIR}/include)
 link_directories(${RAYLIB_DIR} ${SDK_DIR}/lib/x86_64-linux-gnu)
 
 add_executable(overdrive src/main.cpp src/game.cpp src/sim.cpp tests/sim_tests.cpp)
-target_link_libraries(overdrive raylib GL m pthread dl rt X11 /usr/lib/x86_64-linux-gnu/libXtst.so.6 -static-libstdc++ -static-libgcc)
+if(WIN32)
+    target_link_libraries(overdrive raylib opengl32 winmm gdi32 -static -static-libstdc++ -static-libgcc)
+else()
+    target_link_libraries(overdrive raylib GL m pthread dl rt X11 /usr/lib/x86_64-linux-gnu/libXtst.so.6 -static-libstdc++ -static-libgcc)
+endif()
 
 add_executable(overdrive_tests tests/main_tests.cpp tests/sim_tests.cpp src/sim.cpp)
 target_link_libraries(overdrive_tests m)

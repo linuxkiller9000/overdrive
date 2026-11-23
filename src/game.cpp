@@ -10,7 +10,7 @@
 namespace {
 
 struct TrackMeshes {
-    Model road, edgeL, edgeR, centerLine;
+    Model road, edgeL, edgeR, centerLine, curbL, curbR;
     std::vector<Vector3> buildings;
     std::vector<Color> buildingColors;
     Vector3 boundsCenter{0, 0, 0};
@@ -64,6 +64,9 @@ TrackMeshes buildTrack(const sim::Track& t, int quality) {
     tm.edgeL = ribbonMesh(t, t.halfWidth - 0.4f, t.halfWidth, neonA, neonA);
     tm.edgeR = ribbonMesh(t, -t.halfWidth, -t.halfWidth + 0.4f, neonB, neonB);
     tm.centerLine = ribbonMesh(t, -0.15f, 0.15f, {80, 80, 95, 255}, {80, 80, 95, 255}, true);
+    Color curbA{200, 40, 60, 255}, curbB{225, 225, 230, 255};
+    tm.curbL = ribbonMesh(t, t.halfWidth + 0.05f, t.halfWidth + 1.5f, curbA, curbB);
+    tm.curbR = ribbonMesh(t, -t.halfWidth - 1.5f, -t.halfWidth - 0.05f, curbA, curbB);
     // procedural city blocks outside the road
     tm.buildings.clear();
     if (quality > 0) {
@@ -240,6 +243,8 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     DrawModel(tm.edgeL, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.edgeR, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.centerLine, {0, 0.03f, 0}, 1.f, WHITE);
+    DrawModel(tm.curbL, {0, 0.04f, 0}, 1.f, WHITE);
+    DrawModel(tm.curbR, {0, 0.04f, 0}, 1.f, WHITE);
     Color fog{16, 12, 40, 255};
     for (size_t i = 0; i < tm.buildings.size(); i++) {
         Vector3 b = tm.buildings[i];
@@ -299,7 +304,30 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             DrawCubeV({pk.pos.x, 1.f, pk.pos.y}, {pulse, pulse, pulse}, {255, 200, 40, 255});
         }
     Color cols[3] = {{230, 230, 240, 255}, {255, 45, 130, 255}, {0, 200, 190, 255}};
-    for (size_t i = 0; i < r.cars.size(); i++) drawCar(r.cars[i], r.specs[i], cols[i % 3]);
+    // rivals sitting on the camera->player sight line fade out instead of hiding the player
+    const sim::Car& pc = r.cars[0];
+    sim::Vec2 camPos{cam.position.x, cam.position.z};
+    sim::Vec2 seg = pc.pos - camPos;
+    float segLen2 = fmaxf(sim::dot(seg, seg), 1e-3f);
+    for (size_t i = 0; i < r.cars.size(); i++) {
+        Color col = cols[i % 3];
+        if (i > 0) {
+            sim::Vec2 rel = r.cars[i].pos - camPos;
+            float along = sim::dot(rel, seg) / segLen2;
+            if (along > 0.25f && along < 0.95f) {
+                sim::Vec2 closest{camPos.x + seg.x * along, camPos.y + seg.y * along};
+                float d = sim::len(r.cars[i].pos - closest);
+                if (d < 3.0f) col.a = (unsigned char)(90 + 165 * (d / 3.0f));
+            }
+        }
+        if (col.a < 255) {
+            BeginBlendMode(BLEND_ALPHA);
+            drawCar(r.cars[i], r.specs[i], col);
+            EndBlendMode();
+        } else {
+            drawCar(r.cars[i], r.specs[i], col);
+        }
+    }
     EndMode3D();
     drawHud(r, app, GetScreenWidth(), GetScreenHeight());
     EndDrawing();
@@ -384,6 +412,14 @@ static int pauseMenu(const GameApp& app) {
     return 2;
 }
 
+// Records update: best lap any finish; best RACE time only counts on a win.
+static void updateRecords(sim::Settings& s, const sim::Car& p) {
+    if (p.bestLap > 0 && (s.bestLapMs < 0 || p.bestLap * 1000.f < s.bestLapMs))
+        s.bestLapMs = (int)(p.bestLap * 1000.f);
+    if (p.finishPlace == 1 && (s.bestRaceMs < 0 || p.raceTime * 1000.f < s.bestRaceMs))
+        s.bestRaceMs = (int)(p.raceTime * 1000.f);
+}
+
 static void drawResults(const GameApp& app, const sim::Race& race) {
     const sim::Car& p = race.cars[0];
     BeginDrawing();
@@ -407,10 +443,7 @@ static void drawResults(const GameApp& app, const sim::Race& race) {
 static void resultsScreen(GameApp& app, const sim::Race& race) {
     const sim::Car& p = race.cars[0];
     // persist bests
-    if (p.bestLap > 0 && (app.settings.bestLapMs < 0 || p.bestLap * 1000.f < app.settings.bestLapMs))
-        app.settings.bestLapMs = (int)(p.bestLap * 1000.f);
-    if (p.finishPlace == 1 && (app.settings.bestRaceMs < 0 || p.raceTime * 1000.f < app.settings.bestRaceMs))
-        app.settings.bestRaceMs = (int)(p.raceTime * 1000.f);
+    updateRecords(app.settings, p);
     sim::saveSettings(app.settings, app.settingsPath);
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) return;
@@ -452,6 +485,7 @@ int runGame(GameApp& app) {
             }
             if (race.cars[0].finished && action == 0) resultsScreen(app, race);
             UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
+        UnloadModel(tm.curbL); UnloadModel(tm.curbR);
             if (action == 1) continue; // restart race
             quitToTitle = true;
         }
@@ -496,11 +530,6 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
         race.step({in, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
         updateChaseCam(cam, cc, race, sim::STEP);
         float t = race.time();
-        // keep evidence frames free of AI cars blocking the player from the camera
-        float nearestAi = 1e9f;
-        for (size_t ci = 1; ci < race.cars.size(); ci++)
-            nearestAi = fminf(nearestAi, sim::len(race.cars[ci].pos - race.cars[0].pos));
-        bool clearView = nearestAi > 14.f;
         // grant one boost charge mid-race so activation is guaranteed on camera
         if (!gotBoost && race.cars[0].lap >= 1 && race.cars[0].boostCharges == 0 && t > 30.f && race.cars[0].boostLeft <= 0)
             race.cars[0].boostCharges = 1;
@@ -508,7 +537,7 @@ int runScreenshots(GameApp& app, const std::string& prefix, int warmFrames, int 
         if (t >= 5.f && taken == 0) { snap("grid-straight"); }
         else if (!gotCorner && race.cars[0].sHint > race.track.total * 0.35f && race.cars[0].sHint < race.track.total * 0.55f) {
             snap("corner"); gotCorner = true;
-        } else if (gotCorner && !gotBoost && race.cars[0].boostLeft > 0.5f && clearView) {
+        } else if (gotCorner && !gotBoost && race.cars[0].boostLeft > 0.5f) {
             snap("turbo"); gotBoost = true;
         } else if (gotBoost && !gotPause && f % 3 == 0) {
             DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), {0, 0, 0, 140});
@@ -587,8 +616,7 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
         if (race.cars[0].boostCharges > 0 && race.cars[0].boostLeft <= 0 && race.cars[0].lap >= 1) aiIn.boost = true;
         race.step({aiIn, sim::aiDrive(race, 1), sim::aiDrive(race, 2)});
     }
-    app.settings.bestLapMs = (int)(race.cars[0].bestLap * 1000.f);
-    app.settings.bestRaceMs = (int)(race.cars[0].raceTime * 1000.f);
+    updateRecords(app.settings, race.cars[0]); // same win-only rules as the real results path
     drawResults(app, race);
     TakeScreenshot((prefix + "-results.png").c_str());
     CloseWindow();

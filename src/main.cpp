@@ -4,14 +4,22 @@
 #include <cstdio>
 #include <string>
 #include <sys/stat.h>
+#include <cstdlib>
 
 int runTests();
 
 static std::string settingsPath() {
+#ifdef _WIN32
+    const char* base = getenv("APPDATA");
+    std::string dir = std::string(base ? base : ".") + "\\overdrive";
+    mkdir(dir.c_str());
+    return dir + "\\settings.cfg";
+#else
     const char* home = getenv("HOME");
     std::string dir = std::string(home ? home : ".") + "/.config/overdrive";
     mkdir(dir.c_str(), 0755);
     return dir + "/settings.cfg";
+#endif
 }
 
 int main(int argc, char** argv) {
