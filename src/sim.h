@@ -51,7 +51,7 @@ struct AITune {
     float wobbleMag = 0.2f;    // mistake magnitude (rad applied to steer)
     int wobbleMask = 0x3FF;    // mistake frequency: rand()&mask == 0
     bool usesBoost = true;
-    int fireMask = 0x7F;       // weapon-decision cadence: rand()&mask == 0
+    int fireMask = 0x3F;       // weapon-decision cadence: rand()&mask == 0
 };
 AITune difficultyTune(int level); // 0 easy, 1 normal, 2 hard
 

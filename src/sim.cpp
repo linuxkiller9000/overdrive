@@ -86,8 +86,8 @@ float Track::nearest(Vec2 p, float hint) const {
 
 AITune difficultyTune(int level) {
     AITune t;
-    if (level == 0) { t.pace = 0.85f; t.steerGain = 1.7f; t.wobbleMag = 0.45f; t.wobbleMask = 0x7F; t.usesBoost = false; t.fireMask = 0x1FF; }
-    else if (level == 2) { t.pace = 1.0f; t.steerGain = 2.6f; t.wobbleMag = 0.08f; t.wobbleMask = 0xFFF; t.fireMask = 0x3F; }
+    if (level == 0) { t.pace = 0.85f; t.steerGain = 1.7f; t.wobbleMag = 0.45f; t.wobbleMask = 0x7F; t.usesBoost = false; t.fireMask = 0xFF; }
+    else if (level == 2) { t.pace = 1.0f; t.steerGain = 2.6f; t.wobbleMag = 0.08f; t.wobbleMask = 0xFFF; t.fireMask = 0x1F; }
     return t;
 }
 
@@ -490,9 +490,9 @@ CarInput aiDrive(const Race& race, int i) {
                     if (j == (size_t)i || race.cars[j].finished) continue;
                     Vec2 to = race.cars[j].pos - c.pos;
                     float dist = len(to);
-                    if (dist > 6.f && dist < 85.f) {
+                    if (dist > 6.f && dist < 100.f) {
                         float ang2 = std::fabs(wrapAngle(std::atan2(to.y, to.x) - c.heading));
-                        if (ang2 < 0.5f) { in.fire = true; break; }
+                        if (ang2 < 0.7f) { in.fire = true; break; }
                     }
                 }
                 break;
