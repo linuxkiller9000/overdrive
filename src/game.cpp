@@ -208,6 +208,131 @@ void bodyShell(float width,float length,float belt,float roof,Color col) {
     rlEnd();
 }
 
+
+// ---- smooth lofted car bodies: cross-sections swept along the length, baked face shading ----
+struct CarVert { Vector3 v; unsigned char zone; float shade; };
+struct CarParams { float L, W, belt, roof, c0, c1, nose, tail, yb, box; };
+static const CarParams kCarP[8] = {
+    {4.2f, 2.1f, .75f, 1.30f, .28f, .62f, .50f, .70f, .30f, 0.f},
+    {4.0f, 2.1f, .60f, 1.10f, .35f, .65f, .38f, .60f, .26f, 0.f},
+    {4.5f, 2.1f, 1.00f, 1.80f, .30f, .85f, .95f, 1.00f, .40f, .6f},
+    {4.9f, 1.9f, .60f, 1.00f, .25f, .50f, .30f, .55f, .26f, 0.f},
+    {4.5f, 2.3f, .62f, 1.05f, .30f, .58f, .35f, .60f, .26f, 0.f},
+    {3.4f, 1.65f, 1.00f, 1.60f, .20f, .80f, .80f, .90f, .32f, .4f},
+    {4.5f, 2.5f, 1.00f, 1.70f, .30f, .80f, .90f, 1.00f, .55f, .6f},
+    {4.7f, 1.9f, .55f, .98f, .30f, .70f, .30f, .50f, .26f, 0.f},
+};
+static float smooth01(float x) { x = fminf(1.f, fmaxf(0.f, x)); return x * x * (3.f - 2.f * x); }
+static const std::vector<CarVert>& carMesh(int design) {
+    static std::vector<CarVert> cache[8];
+    std::vector<CarVert>& out = cache[design & 7];
+    if (!out.empty()) return out;
+    const CarParams& P = kCarP[design & 7];
+    const int NS = 22, NR = 6;
+    // row positions per station (right half, then mirrored)
+    std::vector<Vector3> grid((NS + 1) * (2 * NR));
+    std::vector<float> cabin(NS + 1);
+    for (int s = 0; s <= NS; s++) {
+        float t = (float)s / NS, z = (t - .5f) * P.L;
+        float e = fabsf(2.f * t - 1.f);
+        float w = P.W * .5f * (1.f - .5f * powf(e, 3.f)) ;
+        w *= 1.f - 0.25f * P.box * powf(e, 6.f) * 0.f;
+        // shoulder height: low nose, hood rises to belt, flat deck, tail
+        float sh;
+        if (t > .65f) sh = P.belt + (P.nose - P.belt) * smooth01((t - .65f) / .35f);
+        else if (t < .18f) sh = P.belt + (P.tail - P.belt) * smooth01((.18f - t) / .18f);
+        else sh = P.belt;
+        float cb = (t > P.c0 && t < P.c1) ? sinf((t - P.c0) / (P.c1 - P.c0) * 3.14159f) : 0.f;
+        cb = powf(cb, .55f); cabin[s] = cb;
+        float rf = sh + (P.roof - sh) * cb;
+        float cw = w * (1.f - .32f * cb);                    // cabin narrows toward the roof
+        // right half rows: bottom, lower side, shoulder, glass top, roof edge, roof center
+        Vector3 r[NR] = {
+            {w * .82f, P.yb, z}, {w, P.yb + .16f, z}, {w * .99f, sh * .96f, z},
+            {cw, sh + (rf - sh) * .15f, z}, {cw * .72f, rf, z}, {0.f, rf + .02f, z}};
+        for (int k = 0; k < NR; k++) {
+            grid[s * 2 * NR + k] = r[k];                                // right half
+            Vector3 m = r[NR - 1 - k]; m.x = -m.x;
+            grid[s * 2 * NR + NR + k] = m;                              // mirrored left, top->bottom
+        }
+    }
+    const float ld[3] = {-.42f, .78f, .46f};
+    float ll = sqrtf(ld[0]*ld[0] + ld[1]*ld[1] + ld[2]*ld[2]);
+    auto push = [&](Vector3 a, Vector3 b, Vector3 c, int zone) {
+        Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
+        float nl = Vector3Length(n); if (nl < 1e-6f) return;
+        n = Vector3Scale(n, 1.f / nl);
+        Vector3 cen = Vector3Scale(Vector3Add(Vector3Add(a, b), c), 1.f / 3.f);
+        Vector3 outv = {cen.x, cen.y - (P.yb + P.roof) * .45f, cen.z * .3f};
+        if (Vector3DotProduct(n, outv) < 0) n = Vector3Scale(n, -1.f);
+        float d = (n.x * ld[0] + n.y * ld[1] + n.z * ld[2]) / ll;
+        float sh = 0.55f + 0.5f * fmaxf(d, -.2f);
+        out.push_back({a, (unsigned char)zone, sh}); out.push_back({b, (unsigned char)zone, sh}); out.push_back({c, (unsigned char)zone, sh});
+    };
+    const int NC = 2 * NR;
+    for (int s = 0; s < NS; s++)
+        for (int k = 0; k < NC - 1; k++) {
+            Vector3 a = grid[s * NC + k], b = grid[s * NC + k + 1];
+            Vector3 c = grid[(s + 1) * NC + k + 1], d = grid[(s + 1) * NC + k];
+            // zone: rocker (accent) on lowest rows, greenhouse glass on row 3 band within cabin, else body
+            int row = k < NR ? k : (NC - 2 - k);           // symmetric row index 0..NR-2
+            int zone = 0;
+            float cb = (cabin[s] + cabin[s + 1]) * .5f;
+            if (row == 0) zone = 2;
+            else if (row == 3 && cb > .18f) zone = 1;
+            if (row == 4 && cb > .18f) zone = 0;
+            push(a, b, c, zone); push(a, c, d, zone);
+        }
+    // end caps
+    for (int end = 0; end < 2; end++) {
+        int s = end ? NS : 0;
+        Vector3 c0 = grid[s * NC];
+        for (int k = 1; k < NC - 1; k++) {
+            push(c0, grid[s * NC + k], grid[s * NC + k + 1], end ? 0 : 2);
+        }
+    }
+    return out;
+}
+static void drawCarBody(int design, Color body, Color glass, Color dark, Color accent) {
+    const std::vector<CarVert>& mesh = carMesh(design);
+    const CarParams& P = kCarP[design & 7];
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    for (const CarVert& cv : mesh) {
+        Color base = cv.zone == 1 ? Color{30, 55, 80, body.a} : cv.zone == 2 ? Color{accent.r, accent.g, accent.b, body.a} : body;
+        float sh = cv.zone == 1 ? 1.f : cv.shade;
+        rlColor4ub((unsigned char)fminf(255.f, base.r * sh), (unsigned char)fminf(255.f, base.g * sh),
+                   (unsigned char)fminf(255.f, base.b * sh), body.a);
+        rlVertex3f(cv.v.x, cv.v.y, cv.v.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+    float W = P.W * .5f, L = P.L * .5f;
+    // lights: headlight pair and a taillight bar
+    for (int sd = -1; sd <= 1; sd += 2) {
+        litBox({sd * W * .62f, P.nose * .78f + .05f, L - .02f}, {.55f, .18f, .12f}, {235, 250, 255, body.a});
+        litBox({sd * W * .6f, P.tail * .8f, -L + .02f}, {.55f, .2f, .1f}, {255, 40, 60, body.a});
+    }
+    // original per-design add-ons
+    switch (design & 7) {
+        case 1: litBox({0, P.tail + .45f, -L + .55f}, {W * 1.7f, .1f, .7f}, dark);              // rear wing
+                for (int sd = -1; sd <= 1; sd += 2) litBox({sd * W * .6f, P.tail + .25f, -L + .55f}, {.1f, .4f, .3f}, dark); break;
+        case 3: litBox({0, P.nose + .08f, L - .25f}, {W * 1.4f, .08f, .5f}, accent);              // nose wing
+                litBox({0, P.tail + .5f, -L + .4f}, {W * 1.5f, .1f, .55f}, dark);
+                litBox({0, P.belt + .12f, .9f}, {.5f, .18f, .9f}, dark); break;                 // intake
+        case 4: litBox({0, P.nose * .6f, L + .02f}, {W * 2.f + .3f, .1f, .45f}, accent);          // splitter
+                litBox({0, P.tail + .35f, -L + .3f}, {W * 2.f, .1f, .5f}, dark); break;
+        case 6: litBox({0, P.roof + .1f, .7f}, {W * 1.4f, .14f, .3f}, dark);                      // roof light bar
+                for (int l = -2; l <= 2; l++) litBox({l * .3f, P.roof + .12f, .88f}, {.16f, .12f, .05f}, {255, 240, 200, body.a}); break;
+        case 7: litBox({0, P.tail + .2f, -L + .3f}, {W * 1.8f, .08f, .5f}, accent);
+                litBox({0, P.tail + .45f, -L + .35f}, {.12f, .35f, .1f}, dark); break;
+        case 5: DrawCylinderEx({0, P.roof, -.4f}, {0, P.roof + .6f, -.4f}, .03f, .01f, 4, accent); break;
+        case 2: litBox({0, P.nose + .25f, L - .1f}, {W * 1.9f, .3f, .15f}, dark); break;          // grille bar
+        default: break;
+    }
+    (void)glass;
+}
+
 void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Matrix m = MatrixMultiply(MatrixRotateY(PI * 0.5f - c.heading), MatrixTranslate(c.pos.x, 0, c.pos.y));
     rlPushMatrix();
@@ -217,73 +342,7 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     Color accent = (sp.name == "SPRINTER") ? Color{255, 200, 40, body.a} : (sp.name == "HAULER") ? Color{230, 230, 240, 255} : Color{0, 229, 220, 255};
     accent.a = body.a;
     float width=sp.design==5?1.65f:sp.design==6?2.5f:sp.design==4?2.3f:sp.design==7?1.9f:2.1f;
-    if (sp.design == 2 || sp.design == 6) {
-        litBox({0,.8f,0},{width,1.f,4.5f},body);
-        litBox({0,1.5f,.55f},{width*.83f,.75f,2.2f},glass);
-        for(int side=-1;side<=1;side+=2) litBox({side*width*.34f,.8f,2.28f},{.45f,.2f,.12f},{220,245,255,body.a});
-        litBox({0,.7f,-2.28f},{width*.8f,.18f,.12f},{255,30,60,body.a});
-        litBox({0,1.92f,.55f},{width*.9f,.12f,2.3f},body);
-        if(sp.design==6) {
-            litBox({0,2.25f,.9f},{1.5f,.22f,.3f},dark);
-            for(int lamp=-2;lamp<=2;lamp++) litBox({lamp*.3f,2.25f,1.06f},{.18f,.14f,.05f},{255,240,200,body.a});
-        }
-        if(sp.design==6) {
-            litBox({0,2.08f,.55f},{width,.18f,2.5f},dark);
-            litBox({0,.7f,2.3f},{width,.25f,.2f},accent);
-        } else litBox({0,1.22f,-1.45f},{width*.8f,.15f,1.3f},dark);
-    } else {
-        float length=sp.design==3?4.9f:sp.design==5?3.4f:sp.design==4?4.5f:sp.design==7?4.7f:4.2f;
-        bodyShell(width,length,sp.design==3?.9f:.72f,sp.design==7?.35f:.52f,body);
-        // Sloped hood and windscreen formed as original low-poly triangular panels.
-        rlBegin(RL_TRIANGLES);
-        rlColor4ub(body.r,body.g,body.b,body.a);
-        float w=width*.5f,z=length*.5f;
-        rlVertex3f(-w,.7f,.55f);rlVertex3f(w,.7f,.55f);rlVertex3f(w,.3f,z);
-        rlVertex3f(-w,.7f,.55f);rlVertex3f(w,.3f,z);rlVertex3f(-w,.3f,z);
-        rlEnd();
-        float roof=sp.design==7?1.05f:sp.design==4?1.18f:sp.design==5?1.5f:sp.design==1?1.15f:1.3f;
-        if(sp.design==7) {
-            rlPushMatrix();rlTranslatef(0,.93f,-.4f);rlScalef(1.f,.65f,1.45f);
-            DrawSphereEx({0,0,0},.72f,6,8,glass);rlPopMatrix();
-        } else {
-            litBox({0,sp.design==5?1.1f:.95f,sp.design==3?-.65f:-.25f},{width*.72f,sp.design==5?.8f:.55f,sp.design==5?1.8f:1.6f},glass);
-        }
-        if(sp.design!=7) litBox({0,roof,sp.design==3?-.7f:-.3f},{width*.65f,.12f,sp.design==5?1.7f:1.2f},body);
-        if(sp.design==4) {
-            litBox({0,.22f,length*.5f},{width+.3f,.1f,.5f},accent);
-            litBox({0,.25f,-length*.5f},{width+.3f,.15f,.3f},dark);
-        }
-        if(sp.design==4) {
-            litBox({-.9f,.7f,-1.4f},{.3f,.16f,1.2f},accent);
-            litBox({.9f,.7f,-1.4f},{.3f,.16f,1.2f},accent);
-        }
-        if(sp.design==1) {
-            litBox({-1.05f,.3f,0},{.2f,.2f,3.2f},accent);
-            litBox({1.05f,.3f,0},{.2f,.2f,3.2f},accent);
-        }
-        if(sp.design==1) {
-            litBox({0,.95f,-1.5f},{width*.6f,.5f,1.1f},dark);
-            litBox({-.3f,.7f,-2.15f},{.18f,.18f,.4f},accent);
-            litBox({.3f,.7f,-2.15f},{.18f,.18f,.4f},accent);
-        }
-        if(sp.design==1 || sp.design==4 || sp.design==7) {
-            litBox({0,1.f,-length*.44f},{width+.2f,.12f,.45f},accent);
-            litBox({-.7f,.8f,-length*.44f},{.12f,.4f,.2f},dark);
-            litBox({.7f,.8f,-length*.44f},{.12f,.4f,.2f},dark);
-        }
-        if(sp.design==3) {
-            litBox({0,.85f,1.1f},{.9f,.25f,1.2f},dark);
-            litBox({0,.4f,length*.5f+.15f},{.8f,.12f,.5f},accent); // nose cone lip
-        }
-        if(sp.design==5) DrawCylinderEx({0,1.55f,-.5f},{0,2.15f,-.5f},.03f,.01f,4,accent);
-        if(sp.design==7) {
-            litBox({-1.1f,.45f,0},{.3f,.5f,3.3f},accent);
-            litBox({1.1f,.45f,0},{.3f,.5f,3.3f},accent);
-        }
-        litBox({0,.49f,-length*.5f-.03f},{width*.85f,.16f,.1f},{255,30,60,body.a});
-        for(int side=-1;side<=1;side+=2)
-            litBox({side*width*.34f,.52f,length*.5f+.02f},{.42f,.15f,.1f},{220,245,255,body.a});
-    }
+    drawCarBody(sp.design, body, glass, dark, accent);
     bool bigWheels = (sp.design == 2 || sp.design == 6);
     float wr = sp.radius * (bigWheels ? 0.52f : sp.design == 5 ? 0.36f : 0.42f);
     float track = (sp.design == 5) ? 1.15f : (sp.design == 4 ? 1.45f : 1.3f);
