@@ -1,0 +1,103 @@
+// Headless simulation tests: no GPU, no window.
+#include "../src/sim.h"
+#include <cstdio>
+#include <cmath>
+
+static int failures = 0;
+#define CHECK(cond, msg) do { if (!(cond)) { std::printf("FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__); failures++; } } while (0)
+
+int runTests() {
+    // track builds closed loop
+    sim::Race r;
+    r.init(3);
+    CHECK(r.track.total > 500.f, "track length sane");
+    {
+        sim::Vec2 a = r.track.pointAt(0), b = r.track.pointAt(r.track.total);
+        CHECK(sim::len(a - b) < 0.5f, "loop closes");
+        CHECK((int)r.track.checkpoints.size() == 8, "8 checkpoints");
+    }
+    // player car accelerates and respects top speed
+    {
+        sim::CarInput in{}; in.throttle = 1;
+        float peak = 0;
+        for (int i = 0; i < 60 * 20; i++) { r.step({in, sim::aiDrive(r, 1), sim::aiDrive(r, 2)}); peak = fmaxf(peak, sim::len(r.cars[0].vel)); }
+        CHECK(peak > 30.f, "car accelerates toward top speed");
+        CHECK(peak < r.specs[0].maxSpeed + r.specs[0].boostAccel * 1.3f, "top speed bounded");
+    }
+    // AI completes a full lap in sane time and checkpoints advance in order
+    {
+        sim::Race r2; r2.init(2);
+        bool finished = false;
+        for (int i = 0; i < 60 * 240 && !finished; i++) {
+            r2.step({sim::aiDrive(r2, 0), sim::aiDrive(r2, 1), sim::aiDrive(r2, 2)});
+            finished = r2.cars[0].finished;
+        }
+        CHECK(finished, "AI completes race distance");
+        CHECK(r2.cars[0].lap >= 2, "laps counted");
+        CHECK(r2.cars[0].bestLap > 0, "best lap recorded");
+    }
+    // walls contain the car: drive into barrier sideways
+    {
+        sim::Race r3; r3.init(3);
+        sim::CarInput in{}; in.throttle = 1; in.steer = 1;
+        for (int i = 0; i < 60 * 30; i++) r3.step({in, sim::aiDrive(r3, 1), sim::aiDrive(r3, 2)});
+        sim::Vec2 onTrack = r3.track.pointAt(r3.track.nearest(r3.cars[0].pos, r3.cars[0].sHint));
+        CHECK(sim::len(r3.cars[0].pos - onTrack) <= r3.track.halfWidth - r3.specs[0].radius + 0.01f, "car stays inside walls");
+    }
+    // boost: pickup grants charge, boost raises speed above base max
+    {
+        sim::Race r4; r4.init(3);
+        // teleport player onto a pickup (and sync the track hint)
+        r4.cars[0].pos = r4.pickups[0].pos;
+        r4.cars[0].sHint = r4.track.total * 0.2f;
+        sim::CarInput in{}; in.throttle = 1;
+        r4.step({in, sim::aiDrive(r4, 1), sim::aiDrive(r4, 2)});
+        CHECK(r4.cars[0].boostCharges == 1, "pickup grants charge");
+        CHECK(!r4.pickups[0].active, "pickup consumed");
+        float baseMax = 0;
+        for (int i = 0; i < 60 * 15; i++) {
+            sim::CarInput ain = sim::aiDrive(r4, 0);
+            ain.throttle = 1; ain.brake = 0; // pin throttle so boost headroom shows
+            ain.boost = (r4.cars[0].boostCharges > 0 && r4.cars[0].boostLeft <= 0);
+            r4.step({ain, sim::aiDrive(r4, 1), sim::aiDrive(r4, 2)});
+            baseMax = fmaxf(baseMax, sim::len(r4.cars[0].vel));
+        }
+        CHECK(baseMax > r4.specs[0].maxSpeed + 2.f, "boost exceeds base top speed");
+        // pickup respawns
+        for (int i = 0; i < 60 * 11; i++) r4.step({in, sim::aiDrive(r4, 1), sim::aiDrive(r4, 2)});
+        CHECK(r4.pickups[0].active, "pickup respawns");
+    }
+    // determinism: same inputs, same final state
+    {
+        sim::Race a, b; a.init(1); b.init(1);
+        for (int i = 0; i < 600; i++) {
+            sim::CarInput in{}; in.throttle = (i % 120 < 90) ? 1 : 0; in.steer = std::sin(i * 0.05f);
+            a.step({in, sim::aiDrive(a, 1), sim::aiDrive(a, 2)});
+            b.step({in, sim::aiDrive(b, 1), sim::aiDrive(b, 2)});
+        }
+        CHECK(a.cars[0].pos.x == b.cars[0].pos.x && a.cars[0].pos.y == b.cars[0].pos.y, "deterministic");
+    }
+    // countdown freezes inputs
+    {
+        sim::Race r5; r5.init(1);
+        sim::CarInput in{}; in.throttle = 1;
+        r5.step({in, sim::aiDrive(r5, 1), sim::aiDrive(r5, 2)});
+        CHECK(sim::len(r5.cars[0].vel) == 0.f, "countdown freezes cars");
+    }
+    // settings roundtrip + corrupt file fallback
+    {
+        std::string p = "/tmp/od_settings_test.cfg";
+        sim::Settings s; s.width = 1366; s.height = 768; s.fpsCap = 30; s.keyBoost = 344; s.playerVehicle = 2; s.bestLapMs = 61234;
+        CHECK(sim::saveSettings(s, p), "settings save");
+        sim::Settings l = sim::loadSettings(p);
+        CHECK(l.width == 1366 && l.height == 768 && l.fpsCap == 30 && l.keyBoost == 344 && l.playerVehicle == 2 && l.bestLapMs == 61234, "settings roundtrip");
+        FILE* f = std::fopen(p.c_str(), "w");
+        std::fputs("width notanumber\nhe", f);
+        std::fclose(f);
+        sim::Settings d = sim::loadSettings(p);
+        CHECK(d.width == 1280 && d.height == 720, "corrupt settings fall back to defaults");
+    }
+    if (failures == 0) std::printf("ALL TESTS PASSED (7 groups)\n");
+    else std::printf("%d FAILURE(S)\n", failures);
+    return failures ? 1 : 0;
+}
