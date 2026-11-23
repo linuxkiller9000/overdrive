@@ -16,7 +16,7 @@
 namespace {
 
 struct TrackMeshes {
-    Model road{}, edgeL{}, edgeR{}, centerLine{}, curbL{}, curbR{}, windows{}, sidewalkL{}, sidewalkR{};
+    Model road{}, edgeL{}, edgeR{}, centerLine{}, curbL{}, curbR{}, windows{}, sidewalkL{}, sidewalkR{}, facades{}, sheenL{}, sheenR{};
     int theme = 0;
     std::vector<Vector3> buildings;
     std::vector<Color> buildingColors;
@@ -24,7 +24,7 @@ struct TrackMeshes {
     float boundsRadius = 400.f;
 };
 
-Model ribbonMesh(const sim::Track& t, float inner, float outer, Color c1, Color c2, bool dashed = false) {
+Model ribbonMesh(const sim::Track& t, float inner, float outer, Color c1, Color c2, bool dashed = false, bool fadeInner = false) {
     // Triangle strip along the centerline, offset band [inner, outer] meters left.
     int n = (int)t.center.size();
     std::vector<Vector3> verts(2 * (n + 1));
@@ -39,7 +39,7 @@ Model ribbonMesh(const sim::Track& t, float inner, float outer, Color c1, Color 
         Color col = (seg % 2 == 0) ? c1 : c2;
         verts[2 * i] = {c.x + lft.x * inner, 0, c.y + lft.y * inner};
         verts[2 * i + 1] = {c.x + lft.x * outer, 0, c.y + lft.y * outer};
-        colors[2 * i] = col;
+        colors[2 * i] = fadeInner ? Color{0, 0, 0, 255} : col;   // fadeInner: additive sheen that fades to black toward the road centre
         colors[2 * i + 1] = col;
     }
     int quads = 0;
@@ -110,6 +110,96 @@ done: ;
     return LoadModelFromMesh(m);
 }
 
+// ---- procedural facade texture + fogged world shader (replaces flat-coloured blocks with flat window quads) ----
+struct WorldGfx { bool tried = false, ok = false; Texture2D facade{}; Shader sh{}; };
+static WorldGfx g_world;
+static const char* kVsWorld =
+    "#version 120\nattribute vec3 vertexPosition; attribute vec2 vertexTexCoord; attribute vec4 vertexColor;\n"
+    "uniform mat4 mvp; varying vec2 fragTexCoord; varying vec4 fragColor; varying float fogT;\n"
+    "void main(){ fragTexCoord = vertexTexCoord; fragColor = vertexColor; gl_Position = mvp * vec4(vertexPosition, 1.0);\n"
+    "  fogT = clamp(gl_Position.w / 900.0, 0.0, 1.0); }\n";
+static const char* kFsWorld =
+    "#version 120\nvarying vec2 fragTexCoord; varying vec4 fragColor; varying float fogT; uniform sampler2D texture0; uniform vec3 fogCol;\n"
+    "void main(){ vec4 t = texture2D(texture0, fragTexCoord); vec3 c = t.rgb * fragColor.rgb;\n"
+    "  float f = fogT * fogT * 0.85; gl_FragColor = vec4(mix(c, fogCol, f), 1.0); }\n";
+static void worldGfxEnsure() {
+    if (g_world.tried) return;
+    g_world.tried = true;
+    const int N = 256, cols = 4, rows = 4, cw = N / cols, ch = N / rows;
+    Image im = GenImageColor(N, N, {26, 28, 40, 255});
+    unsigned st = 9137;
+    auto rnd = [&]() { st ^= st << 13; st ^= st >> 17; st ^= st << 5; return (st & 0xFFFF) / 65535.f; };
+    for (int y = 0; y < N; y++) for (int x = 0; x < N; x++) {        // concrete grain
+        int g = 22 + (int)(rnd() * 12.f) + (int)(8.f * (1.f - (float)(y % ch) / ch));
+        ImageDrawPixel(&im, x, y, Color{(unsigned char)g, (unsigned char)(g + 2), (unsigned char)(g + 10), 255});
+    }
+    for (int r = 0; r < rows; r++) for (int c = 0; c < cols; c++) {
+        int x0 = c * cw, y0 = r * ch;
+        ImageDrawRectangle(&im, x0, y0 + ch - 6, cw, 6, {14, 15, 24, 255});            // floor slab
+        ImageDrawRectangle(&im, x0, y0, 7, ch, {16, 17, 27, 255});                        // pier
+        int wx = x0 + 9, wy = y0 + 9, ww = cw - 18, wh = ch - 24;
+        ImageDrawRectangle(&im, wx - 2, wy - 2, ww + 4, wh + 4, {58, 62, 80, 255});      // frame
+        float lit = rnd();
+        Color glass{10, 18, 34, 255};                                                     // dark glass
+        if (lit > 0.42f) {
+            bool warm = rnd() > 0.45f;
+            float k = 0.65f + 0.35f * rnd();
+            glass = warm ? Color{(unsigned char)(255 * k), (unsigned char)(190 * k), (unsigned char)(95 * k), 255}
+                         : Color{(unsigned char)(120 * k), (unsigned char)(205 * k), (unsigned char)(255 * k), 255};
+        }
+        ImageDrawRectangle(&im, wx, wy, ww, wh, glass);
+        ImageDrawRectangle(&im, wx, wy, ww, 3, ColorBrightness(glass, 0.25f));            // top highlight
+        ImageDrawRectangle(&im, wx + ww / 2 - 1, wy, 2, wh, {40, 44, 60, 255});          // mullion
+    }
+    g_world.facade = LoadTextureFromImage(im);
+    UnloadImage(im);
+    GenTextureMipmaps(&g_world.facade);
+    SetTextureFilter(g_world.facade, TEXTURE_FILTER_TRILINEAR);
+    SetTextureWrap(g_world.facade, TEXTURE_WRAP_REPEAT);
+    g_world.sh = LoadShaderFromMemory(kVsWorld, kFsWorld);
+    g_world.ok = g_world.sh.id > 0 && g_world.sh.id != rlGetShaderIdDefault() && g_world.facade.id > 0;
+    if (g_world.ok) { float fc[3] = {16.f / 255, 12.f / 255, 40.f / 255}; SetShaderValue(g_world.sh, GetShaderLocation(g_world.sh, "fogCol"), fc, SHADER_UNIFORM_VEC3); }
+}
+static Model facadeMesh(const std::vector<Vector3>& bs, const std::vector<Color>& cols) {
+    std::vector<float> V, T; std::vector<unsigned char> C; std::vector<unsigned short> I;
+    unsigned short base = 0;
+    unsigned st = 31337;
+    auto rnd = [&]() { st ^= st << 13; st ^= st >> 17; st ^= st << 5; return (st & 0xFFFF) / 65535.f; };
+    for (size_t i = 0; i < bs.size() && base < 65400; i++) {
+        const Vector3& b = bs[i]; float top = b.y * 2.f, h = 5.f;
+        Color bc = cols[i];
+        float u0 = floorf(rnd() * 4.f) * 0.25f, vScale = top / 12.8f;
+        // normals of the four walls: +x, -x, +z, -z with matching face shade
+        struct W { Vector3 a, b2; float shade; } w[4] = {
+            {{b.x + h, 0, b.z - h}, {b.x + h, 0, b.z + h}, 0.80f}, {{b.x - h, 0, b.z + h}, {b.x - h, 0, b.z - h}, 0.55f},
+            {{b.x + h, 0, b.z + h}, {b.x - h, 0, b.z + h}, 0.95f}, {{b.x - h, 0, b.z - h}, {b.x + h, 0, b.z - h}, 0.62f}};
+        for (int f = 0; f < 4; f++) {
+            Vector3 p0 = w[f].a, p1 = w[f].b2;
+            float tr = 0.55f + bc.r / 255.f * 1.6f, tg = 0.55f + bc.g / 255.f * 1.6f, tb = 0.60f + bc.b / 255.f * 1.3f;
+            unsigned char cr = (unsigned char)fminf(255.f, 255.f * w[f].shade * fminf(1.f, tr)), cg = (unsigned char)fminf(255.f, 255.f * w[f].shade * fminf(1.f, tg)), cb = (unsigned char)fminf(255.f, 255.f * w[f].shade * fminf(1.f, tb));
+            float vs[4][3] = {{p0.x, 0, p0.z}, {p1.x, 0, p1.z}, {p1.x, top, p1.z}, {p0.x, top, p0.z}};
+            float uv[4][2] = {{u0, vScale}, {u0 + 1.f, vScale}, {u0 + 1.f, 0}, {u0, 0}};
+            for (int k = 0; k < 4; k++) {
+                V.insert(V.end(), vs[k], vs[k] + 3); T.push_back(uv[k][0]); T.push_back(uv[k][1]);
+                C.push_back(cr); C.push_back(cg); C.push_back(cb); C.push_back(255);
+            }
+            I.push_back(base); I.push_back(base + 1); I.push_back(base + 2); I.push_back(base); I.push_back(base + 2); I.push_back(base + 3);
+            base += 4;
+        }
+    }
+    Mesh m{};
+    m.vertexCount = (int)V.size() / 3; m.triangleCount = (int)I.size() / 3;
+    m.vertices = (float*)MemAlloc(V.size() * sizeof(float)); m.texcoords = (float*)MemAlloc(T.size() * sizeof(float));
+    m.colors = (unsigned char*)MemAlloc(C.size()); m.indices = (unsigned short*)MemAlloc(I.size() * sizeof(unsigned short));
+    memcpy(m.vertices, V.data(), V.size() * sizeof(float)); memcpy(m.texcoords, T.data(), T.size() * sizeof(float));
+    memcpy(m.colors, C.data(), C.size()); memcpy(m.indices, I.data(), I.size() * sizeof(unsigned short));
+    UploadMesh(&m, false);
+    Model md = LoadModelFromMesh(m);
+    md.materials[0].shader = g_world.sh;
+    md.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = g_world.facade;
+    return md;
+}
+
 TrackMeshes buildTrack(const sim::Track& t, int quality, int theme = 0) {
     TrackMeshes tm;
     bool coastal = (theme == 1);
@@ -121,6 +211,8 @@ TrackMeshes buildTrack(const sim::Track& t, int quality, int theme = 0) {
     tm.edgeL = ribbonMesh(t, t.halfWidth - 0.4f, t.halfWidth, neonA, neonA);
     tm.edgeR = ribbonMesh(t, -t.halfWidth, -t.halfWidth + 0.4f, neonB, neonB);
     tm.centerLine = ribbonMesh(t, -0.15f, 0.15f, coastal ? Color{210,180,90,255} : Color{80,80,95,255}, coastal ? Color{210,180,90,255} : Color{80,80,95,255}, true);
+    tm.sheenL = ribbonMesh(t, t.halfWidth - 5.5f, t.halfWidth - 0.4f, Color{(unsigned char)(neonA.r * 0.32f), (unsigned char)(neonA.g * 0.32f), (unsigned char)(neonA.b * 0.32f), 255}, Color{(unsigned char)(neonA.r * 0.32f), (unsigned char)(neonA.g * 0.32f), (unsigned char)(neonA.b * 0.32f), 255}, false, true);
+    tm.sheenR = ribbonMesh(t, -t.halfWidth + 5.5f, -t.halfWidth + 0.4f, Color{(unsigned char)(neonB.r * 0.30f), (unsigned char)(neonB.g * 0.30f), (unsigned char)(neonB.b * 0.30f), 255}, Color{(unsigned char)(neonB.r * 0.30f), (unsigned char)(neonB.g * 0.30f), (unsigned char)(neonB.b * 0.30f), 255}, false, true);
     Color walkA = coastal ? Color{196,178,130,255} : Color{44,49,65,255};
     Color walkB = coastal ? Color{184,166,120,255} : Color{40,44,59,255};
     tm.sidewalkL = ribbonMesh(t, t.halfWidth + 1.5f, t.halfWidth + 10.f, walkA, walkB);
@@ -154,7 +246,8 @@ TrackMeshes buildTrack(const sim::Track& t, int quality, int theme = 0) {
                 tm.buildingColors.push_back(bc);
             }
         }
-        tm.windows = windowMesh(tm.buildings);
+        worldGfxEnsure();
+        if (g_world.ok) tm.facades = facadeMesh(tm.buildings, tm.buildingColors); else tm.windows = windowMesh(tm.buildings);
     }
     if (quality > 0 && coastal) {
         unsigned st = 4242;
@@ -413,8 +506,11 @@ static bool drawObjCar(Color body) {
     rlBegin(RL_TRIANGLES);
     for (const ObjVert& v : M.tris) {
         Color b = v.paint ? body : v.c;
-        rlColor4ub((unsigned char)fminf(255.f, b.r * v.shade), (unsigned char)fminf(255.f, b.g * v.shade),
-                   (unsigned char)fminf(255.f, b.b * v.shade), body.a);
+        // clearcoat: paint on up-facing panels picks up a cool sky tint and a hot specular streak
+        float sp = v.paint ? powf(fmaxf(0.f, (v.shade - 0.86f) / 0.14f), 2.5f) : 0.f;
+        float add = sp * 95.f, tint = v.paint ? 12.f * sp : 0.f;
+        rlColor4ub((unsigned char)fminf(255.f, b.r * v.shade + add), (unsigned char)fminf(255.f, b.g * v.shade + add),
+                   (unsigned char)fminf(255.f, b.b * v.shade + add + tint), body.a);
         rlVertex3f(v.v.x, v.v.y, v.v.z);
     }
     rlEnd();
@@ -538,6 +634,20 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     if (c.boostLeft > 0.f) {
         litBox({0, 0.45f, -2.6f}, {1.4f, 0.3f, 0.9f}, {255, 200, 40, body.a});
         litBox({0, 0.45f, -3.2f}, {0.9f, 0.2f, 0.7f}, {255, 120, 20, body.a});
+    }
+    if (body.a == 255) {   // light glows: additive, no depth write, so the post-process bloom has something to pick up
+        float hx = (sp.design == 5 ? 0.55f : 0.72f), zr = -(imported ? 2.15f : 2.0f), zf = (imported ? 2.15f : 2.0f), hy = imported ? 0.62f : 0.7f;
+        rlDrawRenderBatchActive();
+        rlDisableDepthMask();
+        BeginBlendMode(BLEND_ADDITIVE);
+        bool braking = false;   // sim::Car carries no brake state; brake-light glow needs it exposed (todo)
+        for (int sx = -1; sx <= 1; sx += 2) {
+            DrawSphere({sx * hx, hy, zr}, braking ? 0.30f : 0.18f, Color{255, 40, 30, (unsigned char)(braking ? 255 : 190)});
+            DrawSphere({sx * hx, hy, zf}, 0.2f, Color{255, 245, 220, 220});
+        }
+        EndBlendMode();
+        rlDrawRenderBatchActive();
+        rlEnableDepthMask();
     }
     rlPopMatrix();
 }
@@ -700,7 +810,7 @@ static PostFx g_post;
 static const char* kFsBright =
     "#version 120\nvarying vec2 fragTexCoord; uniform sampler2D texture0;\n"
     "void main(){ vec3 c = texture2D(texture0, fragTexCoord).rgb; float l = max(c.r, max(c.g, c.b));\n"
-    "  float k = smoothstep(0.55, 0.95, l); gl_FragColor = vec4(c * k * 1.4, 1.0); }\n";
+    "  float k = smoothstep(0.8, 1.05, l); gl_FragColor = vec4(c * k * 1.0, 1.0); }\n";
 static const char* kFsBlur =
     "#version 120\nvarying vec2 fragTexCoord; uniform sampler2D texture0; uniform vec2 texel;\n"
     "void main(){ vec3 s = texture2D(texture0, fragTexCoord).rgb * 0.227;\n"
@@ -713,7 +823,7 @@ static const char* kFsComp =
     "void main(){ vec2 uv = fragTexCoord; vec2 d = uv - vec2(0.5, 0.55); float r = length(d);\n"
     "  vec3 c = vec3(0.0); float wsum = 0.0;\n"
     "  for (int i = 0; i < 7; i++) { float t = float(i) / 6.0; float w = 1.0 - t * 0.6;\n"
-    "    vec2 o = d * (speed * 0.07 * t * smoothstep(0.05, 0.6, r));\n"
+    "    vec2 o = d * (speed * 0.035 * t * smoothstep(0.05, 0.6, r));\n"
     "    vec2 ca = d * (0.004 * r);\n"
     "    c += vec3(texture2D(texture0, uv - o + ca).r, texture2D(texture0, uv - o).g, texture2D(texture0, uv - o - ca).b) * w; wsum += w; }\n"
     "  c /= wsum; c += texture2D(texture1, uv).rgb * bloomAmt;\n"
@@ -806,11 +916,18 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
     DrawModel(tm.edgeL, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.edgeR, {0, 0.02f, 0}, 1.f, WHITE);
     DrawModel(tm.centerLine, {0, 0.03f, 0}, 1.f, WHITE);
+    {   // wet-road neon sheen: additive, no depth write
+        rlDrawRenderBatchActive(); rlDisableDepthMask(); rlDisableBackfaceCulling(); BeginBlendMode(BLEND_ADDITIVE);
+        DrawModel(tm.sheenL, {0, 0.035f, 0}, 1.f, WHITE);
+        DrawModel(tm.sheenR, {0, 0.035f, 0}, 1.f, WHITE);
+        EndBlendMode(); rlDrawRenderBatchActive(); rlEnableBackfaceCulling(); rlEnableDepthMask();
+    }
     DrawModel(tm.sidewalkL, {0, -0.01f, 0}, 1.f, WHITE);
     DrawModel(tm.sidewalkR, {0, -0.01f, 0}, 1.f, WHITE);
     DrawModel(tm.curbL, {0, 0.04f, 0}, 1.f, WHITE);
     DrawModel(tm.curbR, {0, 0.04f, 0}, 1.f, WHITE);
     if (tm.windows.meshCount > 0) { rlDisableBackfaceCulling(); DrawModel(tm.windows, {0, 0, 0}, 1.f, WHITE); rlEnableBackfaceCulling(); }
+    if (tm.facades.meshCount > 0) { rlDisableBackfaceCulling(); DrawModel(tm.facades, {0, 0, 0}, 1.f, WHITE); rlEnableBackfaceCulling(); }
     Color fog = coastal ? Color{120, 80, 90, 255} : Color{16, 12, 40, 255};
     for (size_t i = 0; i < tm.buildings.size(); i++) {
         Vector3 b = tm.buildings[i];
@@ -836,7 +953,7 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
             }
             continue;
         }
-        DrawCubeV(b, {10, b.y * 2, 10}, bc);
+        if (tm.facades.meshCount == 0) DrawCubeV(b, {10, b.y * 2, 10}, bc);
         DrawCubeV({b.x, b.y * 2 + 1.2f, b.z}, {6.5f, 2.4f, 6.5f}, ColorBrightness(bc, -0.25f));
         Color trim = (i % 3 == 0) ? Color{0, 229, 220, 255} : (i % 3 == 1) ? Color{255, 45, 130, 255} : Color{255, 200, 40, 255};
         DrawCubeV({b.x, b.y * 2 + 0.3f, b.z}, {10.4f, 0.35f, 10.4f}, ColorLerp(fog, trim, fade));
@@ -1009,7 +1126,7 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         EndTextureMode();
         float sp = fminf(1.f, sim::len(p.vel) / fmaxf(1.f, r.specs[0].maxSpeed));
         if (p.boostLeft > 0.f) sp = fminf(1.4f, sp + 0.35f);
-        postResolve(sp, 0.85f);
+        postResolve(sp, 0.45f);
     }
     drawHud(r, app, GetScreenWidth(), GetScreenHeight());
     EndDrawing();
@@ -1358,10 +1475,11 @@ int runGame(GameApp& app) {
                 drawFrame(race, tm, cam, app, in.steer);
             }
             if (race.cars[0].finished && action == 0) resultsScreen(app, race);
-            UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
+            UnloadModel(tm.sheenL); UnloadModel(tm.sheenR); UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
         UnloadModel(tm.sidewalkL); UnloadModel(tm.sidewalkR);
         UnloadModel(tm.curbL); UnloadModel(tm.curbR);
         if (tm.windows.meshCount > 0) UnloadModel(tm.windows);
+        if (tm.facades.meshCount > 0) { tm.facades.materials[0].shader = Shader{}; tm.facades.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = Texture2D{}; UnloadModel(tm.facades); }
             if (action == 1) continue; // restart race
             quitToTitle = true;
         }
@@ -1578,9 +1696,10 @@ int runFxShots(GameApp& app, const std::string& prefix, int track) {
                 TakeScreenshot(name);
             } else drawFrame(race, tm, cam, app, 0);
         }
-        UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
+        UnloadModel(tm.sheenL); UnloadModel(tm.sheenR); UnloadModel(tm.road); UnloadModel(tm.edgeL); UnloadModel(tm.edgeR); UnloadModel(tm.centerLine);
         UnloadModel(tm.sidewalkL); UnloadModel(tm.sidewalkR); UnloadModel(tm.curbL); UnloadModel(tm.curbR);
         if (tm.windows.meshCount > 0) UnloadModel(tm.windows);
+        if (tm.facades.meshCount > 0) { tm.facades.materials[0].shader = Shader{}; tm.facades.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = Texture2D{}; UnloadModel(tm.facades); }
     }
     CloseWindow();
     return 0;
