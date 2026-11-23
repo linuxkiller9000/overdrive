@@ -437,8 +437,8 @@ static void updateChaseCam(Camera3D& cam, ChaseCam& cc, const sim::Race& r, floa
     const sim::Car& p = r.cars[0];
     sim::Vec2 fwd{std::cos(p.heading), std::sin(p.heading)};
     float speed = sim::len(p.vel);
-    float dist = 8.f + speed * 0.08f; // bounded: player stays in view through boost
-    Vector3 camPos = {p.pos.x - fwd.x * dist, 4.5f + speed * 0.03f, p.pos.y - fwd.y * dist};
+    float dist = 9.f + speed * 0.08f; // bounded: player stays in view through boost
+    Vector3 camPos = {p.pos.x - fwd.x * dist, 5.4f + speed * 0.03f, p.pos.y - fwd.y * dist};
     if (!cc.init) { cc.smoothed = camPos; cc.init = true; }
     float a = 1.f - std::exp(-6.f * dt);
     cc.smoothed = Vector3Lerp(cc.smoothed, camPos, a);
@@ -641,11 +641,13 @@ static void drawFrame(const sim::Race& r, const TrackMeshes& tm, const Camera3D&
         Color col = cols[i % 8];
         if (i > 0) {
             sim::Vec2 rel = r.cars[i].pos - camPos;
+            // a rival within 9 m of the lens would fill the screen: don't draw it at all
+            if (sim::len(rel) < 9.f) continue;
             float along = sim::dot(rel, seg) / segLen2;
             if (along > -0.1f && along < 1.0f) {
                 sim::Vec2 closest{camPos.x + seg.x * along, camPos.y + seg.y * along};
                 float d = sim::len(r.cars[i].pos - closest);
-                if (d < 3.0f) col.a = 42;
+                if (d < 3.0f) col.a = 70;
             }
         }
         if (col.a < 255) {
