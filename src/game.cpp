@@ -427,7 +427,9 @@ static const RealSpec* realSpecFor(int design) {
     static const RealSpec dodge{"dodge_charger", 163, 4, 1, false, "DODGE CHARGER"};
     static const RealSpec gtr{"nissan_gtr", 5, 19, 86, false, "NISSAN GTR"};
     static const RealSpec camaro{"camaro_zl1", 232, 13, 8, false, "CAMARO ZL1"};
-    switch (design) { case 2: return &dodge; case 3: return &camaro; case 4: return &gtr; default: return nullptr; }
+    static const RealSpec chall{"dodge_challenger", 27, 0, 0, false, "DODGE CHALLENGER"};
+    static const RealSpec mx{"nissan_180mx", 34, 4, 3, false, "NISSAN 180MX"};
+    switch (design) { case 1: return &mx; case 2: return &dodge; case 3: return &gtr; case 4: return &chall; case 7: return &camaro; default: return nullptr; }
 }
 static ObjCar& glbCar(const RealSpec& rs) {
     static std::map<std::string, ObjCar> cache;
@@ -519,7 +521,7 @@ void drawCar(const sim::Car& c, const sim::CarSpec& sp, Color body) {
     accent.a = body.a;
     float width=sp.design==5?1.65f:sp.design==6?2.5f:sp.design==4?2.3f:sp.design==7?1.9f:2.1f;
     const RealSpec* rsp = realSpecFor(sp.design);
-    bool imported = (sp.design == 7 && drawObjCar(body)) || (rsp && drawGlbCar(*rsp, body));
+    bool imported = (sp.design == 0 && drawObjCar(body)) || (rsp && drawGlbCar(*rsp, body));
     if (!imported) drawCarBody(sp.design, body, glass, dark, accent);
     bool bigWheels = (sp.design == 2 || sp.design == 6);
     float wr = sp.radius * (bigWheels ? 0.52f : sp.design == 5 ? 0.36f : 0.42f);

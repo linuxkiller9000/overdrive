@@ -21,3 +21,8 @@ Poly Pizza page statement for all three: "Creative Commons Attribution". Its cre
 | CAMARO ZL1 | Kris Tong ("Camaro ZL1 2017") | https://poly.pizza/m/7bF7UVAoYRG | Creative Commons Attribution (version not stated) | camaro_zl1/model.glb |
 
 Evaluated and not used: Toyota Hilux 97 (materials include unrelated character-named entries, provenance unclear), Mazda RX-7 by IvOfficial (19.7k tris, textured, deferred), Chevrolet Camaro by PuKkBuMXDD and the BMW M4 game rip (see above).
+
+| DODGE CHALLENGER | Grzybek ("2015 Dodge Challenger") | https://poly.pizza/m/1jB8I4t5w4 | Creative Commons Attribution (version not stated on page) | dodge_challenger/model.glb |
+| NISSAN 180MX | Grzybek ("1994 Nissan 180MX") | https://poly.pizza/m/c7vlPQ8dlt | Creative Commons Attribution (version not stated on page) | nissan_180mx/model.glb |
+
+The CC0 VOXEL DEV coupe (lowpoly911) now sits on the STANDARD slot under its generic slot name.
