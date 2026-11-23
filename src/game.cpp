@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "game.h"
 #include "raylib.h"
 #include "raymath.h"
@@ -1032,7 +1033,7 @@ static void drawCreator(GameApp& app, int row, float rot) {
     DrawRectangleGradientV(0, 0, W, H, {16, 28, 46, 255}, {6, 9, 16, 255});
     DrawRectangle(0, 0, W, 5, {255, 45, 130, 255});
     DrawText("OVERDRIVE / CAR CREATOR", 44, 26, 28, {150, 170, 190, 255});
-    Camera3D gc{{8.5f, 4.2f, 8.5f}, {0, .8f, 0}, {0, 1, 0}, 40, CAMERA_PERSPECTIVE};
+    Camera3D gc{{7.4f, 2.6f, 7.4f}, {1.1f, .55f, -1.1f}, {0, 1, 0}, 36, CAMERA_PERSPECTIVE};
     BeginMode3D(gc);
     DrawCylinder({0, -.15f, 0}, 3.8f, 3.8f, .18f, 48, {30, 44, 59, 255});
     DrawCylinderWires({0, -.04f, 0}, 3.9f, 3.9f, .05f, 48, {255, 45, 130, 255});
@@ -1043,14 +1044,15 @@ static void drawCreator(GameApp& app, int row, float rot) {
         "TAIL HEIGHT", "RIDE HEIGHT", "REAR WING", "FRONT SPLITTER", "PAINT RED", "PAINT GREEN", "PAINT BLUE", "POWER", "HANDLING", "GRIP", "ARMOR", "SAVE AND EQUIP"};
     static const char* tmpl[8] = {"STANDARD", "SPRINTER", "HAULER", "AFTERBURN", "SIDEWINDER", "VOLT", "RIDGEBACK", "PHANTOM"};
     static const char* lv[3] = {"NONE", "LOW", "HIGH"};
-    int x = W - 470, y0 = 70;
-    DrawRectangle(x - 20, y0 - 14, 456, kCreatorRows * 30 + 28, {7, 13, 23, 240});
+    int RH = std::min(30, (H - 96) / kCreatorRows), FS = RH >= 28 ? 18 : RH >= 24 ? 16 : 14;
+    int x = W - 470, y0 = 64;
+    DrawRectangle(x - 20, y0 - 14, 456, kCreatorRows * RH + 28, {7, 13, 23, 240});
     for (int i = 0; i < kCreatorRows; i++) {
-        int y = y0 + i * 30;
+        int y = y0 + i * RH;
         bool sel = i == row;
-        if (sel) DrawRectangle(x - 14, y - 4, 444, 28, {40, 20, 40, 255});
+        if (sel) DrawRectangle(x - 14, y - 3, 444, RH - 2, {40, 20, 40, 255});
         Color tc = sel ? Color{255, 255, 255, 255} : Color{160, 180, 200, 255};
-        DrawText(names[i], x, y, 18, tc);
+        DrawText(names[i], x, y, FS, tc);
         const char* v = "";
         switch (i) {
             case 0: v = tmpl[c.base & 7]; break;
@@ -1064,7 +1066,7 @@ static void drawCreator(GameApp& app, int row, float rot) {
             case 17: v = TextFormat("%d / 6", c.grip); break; case 18: v = TextFormat("%d / 6", c.armor); break;
             case 19: v = app.settings.playerVehicle == 8 ? "EQUIPPED" : "ENTER"; break;
         }
-        DrawText(v, x + 230, y, 18, i >= 15 && i <= 18 ? GOLD : tc);
+        DrawText(v, x + 230, y, FS, i >= 15 && i <= 18 ? GOLD : tc);
     }
     int used = c.power + c.handling + c.grip + c.armor;
     sim::CarSpec sp = sim::customSpec(c);
@@ -1415,7 +1417,7 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
             if (k == 0) { sim::g_custom.L = 5.0f; sim::g_custom.W = 1.9f; sim::g_custom.wing = 2; sim::g_custom.splitter = 2; sim::g_custom.r = 40; sim::g_custom.g = 120; sim::g_custom.b = 235; sim::g_custom.power = 5; sim::g_custom.armor = 1; }
             if (k == 1) { sim::g_custom.roof = 1.5f; sim::g_custom.r = 235; sim::g_custom.g = 190; sim::g_custom.b = 40; sim::g_custom.armor = 5; sim::g_custom.power = 2; }
             sim::clampCustom(sim::g_custom);
-            drawCreator(app, k == 0 ? 1 : 10, .9f);
+            drawCreator(app, k == 0 ? 1 : 10, 1.75f + k * 1.0f);
             TakeScreenshot((prefix + "-creator-" + std::to_string(k) + ".png").c_str());
         }
     }
