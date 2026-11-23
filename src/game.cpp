@@ -928,12 +928,12 @@ struct MenuResult { bool quit = false; };
 
 // returns true if the user chose "race"
 static void drawTitle(const GameApp& app, int sel) {
-    const char* items[] = {"START RACE", "GARAGE", "TRACK", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "QUIT"};
+    const char* items[] = {"START RACE", "GARAGE", "TRACK", "DIFFICULTY", "LAPS", "QUALITY", "FPS CAP", "CREDITS", "QUIT"};
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     BeginDrawing();
     ClearBackground({8, 8, 20, 255});
     drawTextOutline("OVERDRIVE", GetScreenWidth() / 2 - 170, 60, 64, {255, 45, 130, 255});
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         const char* val = "";
         if (i == 1) val = app.settings.playerVehicle == 8 ? "CUSTOM" : roster[app.settings.playerVehicle % (int)roster.size()].name.c_str();
         if (i == 2) val = sim::trackDefs()[app.settings.trackIndex % (int)sim::trackDefs().size()].name.c_str();
@@ -1113,14 +1113,38 @@ static void garageMenu(GameApp& app) {
 }
 
 
+static void drawCredits() {
+    const char* lines[] = {
+        "3D MODELS (all CC BY 3.0 unless noted; files only, car brands and designs belong to their owners)",
+        "DODGE CHARGER and NISSAN GTR - David Sirera - poly.pizza/m/4b80hRVxqvv , /m/a_HKCtYAv2W",
+        "CAMARO ZL1 2017 - Kris Tong - poly.pizza/m/7bF7UVAoYRG",
+        "2015 DODGE CHALLENGER and 1994 NISSAN 180MX - Grzybek - poly.pizza/m/1jB8I4t5w4 , /m/c7vlPQ8dlt",
+        "LOW POLY SPORT CAR - VOXEL DEV - CC0 1.0 - voxel-dev.itch.io",
+        "Models are scaled, re-oriented and body-recoloured; otherwise unmodified.",
+        "ENGINE: raylib 5.5 (zlib licence).",
+        "Full licence list: assets/models/CREDITS.md",
+        "Names and badges of real cars are shown only when the model file loaded."};
+    BeginDrawing(); ClearBackground({8,8,20,255});
+    drawTextOutline("CREDITS", 60, 40, 44, {255,45,130,255});
+    for (int i = 0; i < 9; i++) DrawText(lines[i], 60, 120 + i * 40, 20, i == 0 ? GOLD : WHITE);
+    DrawText("ESC / ENTER to go back", 60, GetScreenHeight() - 50, 18, GRAY);
+    EndDrawing();
+}
+static void creditsScreen() {
+    while (!WindowShouldClose()) {
+        if (menuPressed(KEY_ESCAPE,GAMEPAD_BUTTON_RIGHT_FACE_RIGHT) || menuPressed(KEY_ENTER,GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) break;
+        drawCredits();
+    }
+}
+
 static bool titleMenu(GameApp& app) {
     int sel = 0;
     if(app.settings.playerVehicle<0 || app.settings.playerVehicle>8 || (app.settings.playerVehicle<8 && !(app.settings.unlocked&(1u<<app.settings.playerVehicle)))) app.settings.playerVehicle=0;
     ensureCustom(app);
     std::vector<sim::CarSpec> roster = sim::defaultRoster();
     while (!WindowShouldClose()) {
-        if (menuPressed(KEY_UP,GAMEPAD_BUTTON_LEFT_FACE_UP)) sel = (sel + 7) % 8;
-        if (menuPressed(KEY_DOWN,GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel = (sel + 1) % 8;
+        if (menuPressed(KEY_UP,GAMEPAD_BUTTON_LEFT_FACE_UP)) sel = (sel + 8) % 9;
+        if (menuPressed(KEY_DOWN,GAMEPAD_BUTTON_LEFT_FACE_DOWN)) sel = (sel + 1) % 9;
         if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_RIGHT)) {
             int d = IsKeyPressed(KEY_LEFT) ? -1 : 1;
             if (sel == 1) garageMenu(app);
@@ -1132,7 +1156,8 @@ static bool titleMenu(GameApp& app) {
         }
         if (menuPressed(KEY_ENTER,GAMEPAD_BUTTON_RIGHT_FACE_DOWN) || IsKeyPressed(KEY_SPACE)) {
             if (sel == 0) return true;
-            if (sel == 7) return false;
+            if (sel == 8) return false;
+            if (sel == 7) creditsScreen();
             if (sel == 1) garageMenu(app);
             if (sel == 2) app.settings.trackIndex = (app.settings.trackIndex + 1) % (int)sim::trackDefs().size();
             if (sel == 3) app.settings.aiDifficulty = (app.settings.aiDifficulty + 1) % 3;
@@ -1371,6 +1396,10 @@ int runUIScreens(GameApp& app, const std::string& prefix) {
     TakeScreenshot((prefix + "-title.png").c_str());
     drawTitle(app, 1);
     TakeScreenshot((prefix + "-vehicle.png").c_str());
+    drawCredits();
+    TakeScreenshot((prefix + "-credits.png").c_str());
+    drawTitle(app, 7);
+    TakeScreenshot((prefix + "-title7.png").c_str());
     drawPause(0);
     TakeScreenshot((prefix + "-pause.png").c_str());
     sim::Race race;
